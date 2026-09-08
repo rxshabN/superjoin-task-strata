@@ -17,7 +17,7 @@ The repository also runs with no key at all, on the committed corpus.
 Requires Python 3.11 and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-git clone <REPO_URL> strata && cd strata
+git clone https://github.com/rxshabN/superjoin-task-strata.git strata && cd strata
 uv sync
 uv run uvicorn strata.api:app --reload
 ```
