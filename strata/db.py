@@ -32,6 +32,9 @@ def connect(cfg: config.Settings | None = None, path: Path | None = None):
 
 def init(conn):
     conn.executescript(SCHEMA)
+    columns = {r["name"] for r in rows(conn, "pragma table_info(claim_canon)")}
+    if "precision" not in columns:
+        conn.execute("alter table claim_canon add column precision real")
     conn.commit()
     return conn
 

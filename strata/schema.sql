@@ -82,7 +82,8 @@ create table if not exists claim_canon (
     value_text text,
     basis_canon text,
     scope_canon text,
-    block_key text
+    block_key text,
+    precision real
 );
 
 create index if not exists claim_canon_block on claim_canon(block_key);
