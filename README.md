@@ -49,15 +49,15 @@ Docker: `docker build -t strata . && docker run -p 8000:8000 strata`.
 
 ## Video Demo
 
-`<VIDEO_URL>`
+`https://drive.google.com/file/d/1ww8Sy_53iyUPZQMeAkwQqWBJREXUR9dy/view?usp=sharing`
 
-| Time | What is shown |
-|---|---|
-| `<t>` | A PDF from outside the starter set processed live |
-| `<t>` | Case 1, corroboration across documents |
-| `<t>` | Case 3, an apparent contradiction explained by basis, then the Answer view |
-| `<t>` | Case 2, a genuine contradiction |
-| `<t>` | Case 4, an extraction failure and the quarantine |
+### What is shown
+
+- A PDF from outside the starter set processed live
+- Case 1, corroboration across documents
+- Case 3, an apparent contradiction explained by basis, then the Answer view
+- Case 2, a genuine contradiction
+- Case 4, an extraction failure and the quarantine
 
 ## Approach
 
