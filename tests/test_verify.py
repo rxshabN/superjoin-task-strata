@@ -58,6 +58,14 @@ def test_grades_on_real_pages(path, page, quote, expected):
     assert grade(quote, doc[page - 1].get_text(), prev_text, next_text) == expected
 
 
+def test_tokens_grade_reaches_neighbouring_page():
+    infographic = "740\nMn\nExpress parcels shipped\n1,429\nK tonnes"
+    letter = "Letter to the Shareholders. Our commitment to driving long-term value creation."
+    assert grade("740Mn Express parcels shipped", letter, infographic, "") == ("tokens", -1)
+    assert grade("740Mn Express parcels shipped", letter, "", infographic) == ("tokens", 1)
+    assert grade("999Mn Express parcels shipped", letter, infographic, "") == (None, 0)
+
+
 def test_char_span_tolerates_line_breaks():
     text = "the revenue from operations on consolidated basis for \nFY24 stood at ₹ 81,415.38 million as against"
     span = char_span("revenue from operations on consolidated basis for FY24 stood at ₹ 81,415.38 million", text)

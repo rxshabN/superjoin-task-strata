@@ -170,21 +170,99 @@ def basis_phrase(*texts) -> str | None:
     return None
 
 
+NUMBER_WORDS = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+}
+
+MONTH_RE = (
+    r"(?:january|february|march|april|may|june|july|august|september|october|november|december|"
+    + "|".join(m for m in MONTHS if len(m) <= 4)
+    + r")"
+)
+
+
 def parse_period(raw) -> tuple[str, str] | None:
     s = squash(raw)
-    s = re.sub(r"\(([a-z]{1,4})\)", "", s).strip()
     s = s.replace("–", "-").replace("—", "-").replace("’", "'").replace("‘", "'")
+    s = re.sub(r"[*†#]+$", "", s).strip()
     if not s or s in ("null", "none"):
         return None
     span = _parse_span(s)
+    if span is None:
+        s = re.sub(r"\([^)]*\)", "", s).strip()
+        s = re.sub(r"^(q[1-4]|h[12]) of ", r"\1 ", s)
+        span = _parse_span(s) if s else None
     if span is None:
         return None
     start, end = span
     return start.isoformat(), end.isoformat()
 
 
+def _month_range(m1: str, m2: str, year: int, end_year: int | None = None) -> tuple[date, date]:
+    a, b = MONTHS[m1], MONTHS[m2]
+    end_year = end_year or year
+    start_year = year if end_year == year and a <= b else (end_year - 1 if end_year == year else year)
+    return date(start_year, a, 1), date(end_year, b, calendar.monthrange(end_year, b)[1])
+
+
+def _fy_months(end_year: int, m1: int, m2: int) -> tuple[date, date]:
+    start_year = end_year - 1 if m1 >= FY_END_MONTH + 1 else end_year
+    stop_year = end_year - 1 if m2 >= FY_END_MONTH + 1 else end_year
+    return date(start_year, m1, 1), date(stop_year, m2, calendar.monthrange(stop_year, m2)[1])
+
+
+def _point(span: tuple[date, date] | None) -> tuple[date, date] | None:
+    return (span[1], span[1]) if span else None
+
+
 def _parse_span(s: str) -> tuple[date, date] | None:
     fy_tail = r"(?:fy|fiscal(?: year)?|financial year)?\s*'?(\d{2}|\d{4})(?:\s*[-/]\s*'?(\d{2}|\d{4}))?"
+    m = re.fullmatch(r"(?:as at |as on )?end[- ](?:of[- ])?(.+)", s)
+    if m:
+        return _point(_parse_span(m[1]))
+    m = re.fullmatch(
+        r"(?:fy|fiscal(?: year)?|financial year)\s*'?(\d{2}|\d{4})\s*\(("
+        + MONTH_RE
+        + r")\s*(?:-|to)\s*("
+        + MONTH_RE
+        + r")\)",
+        s,
+    )
+    if m:
+        return _fy_months(_year(m[1]), MONTHS[m[2]], MONTHS[m[3]])
+    m = re.fullmatch(r"first (\w+) months of " + fy_tail, s)
+    if m and m[1] in NUMBER_WORDS:
+        start = _fy(_fy_end_year(m[2], m[3]))[0]
+        month = start.month + NUMBER_WORDS[m[1]] - 1
+        stop_year = start.year + (month - 1) // 12
+        month = (month - 1) % 12 + 1
+        return start, date(stop_year, month, calendar.monthrange(stop_year, month)[1])
+    m = re.fullmatch(r"(?:for the )?(\w+) months(?: period)? ended (?:on )?(.+)", s)
+    if m and m[1] in NUMBER_WORDS:
+        end = _parse_date(m[2])
+        if end:
+            return _months_before(end, NUMBER_WORDS[m[1]]), end
+    m = re.fullmatch(r"(" + MONTH_RE + r")\s+(\d{4})\s*(?:-|to)\s*(" + MONTH_RE + r")\s+(\d{4})", s)
+    if m:
+        return _month_range(m[1], m[3], int(m[2]), int(m[4]))
+    m = re.fullmatch(r"(" + MONTH_RE + r")\s*(?:-|to)\s*(" + MONTH_RE + r")\s+(\d{4})", s)
+    if m:
+        return _month_range(m[1], m[2], int(m[3]))
+    m = re.fullmatch(r"q([1-4])\s+(?:of\s+)?(\d{4})", s)
+    if m:
+        y, q = int(m[2]), int(m[1])
+        return date(y, 3 * q - 2, 1), date(y, 3 * q, calendar.monthrange(y, 3 * q)[1])
     m = re.fullmatch(r"q([1-4])\s*" + fy_tail, s)
     if m:
         y = _fy_end_year(m[2], m[3])

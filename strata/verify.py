@@ -43,6 +43,10 @@ def grade(quote: str, page_text: str, prev_text: str = "", next_text: str = "") 
         return "nearby", 1
     if tokens_present(q, page):
         return "tokens", 0
+    if prev_text and tokens_present(q, normalize(prev_text)):
+        return "tokens", -1
+    if next_text and tokens_present(q, normalize(next_text)):
+        return "tokens", 1
     return None, 0
 
 
@@ -97,6 +101,16 @@ def verify_document(conn, doc_id: int) -> dict:
         stats[found] += 1
     db.commit(conn)
     return stats
+
+
+def reverify_document(conn, doc_id: int) -> dict:
+    conn.execute(
+        "delete from quarantine where claim_id in (select id from claims where doc_id = ? and status = 'quarantined')",
+        (doc_id,),
+    )
+    conn.execute("update claims set status = 'unverified' where doc_id = ? and status = 'quarantined'", (doc_id,))
+    db.commit(conn)
+    return verify_document(conn, doc_id)
 
 
 def _quarantine(conn, claim_id: int, reason: str, detail: str, stats: dict):

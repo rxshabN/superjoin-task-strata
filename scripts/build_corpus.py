@@ -8,7 +8,7 @@ from strata.canon import canonicalise_document, reset
 from strata.extract import extract_document
 from strata.ingest import ingest_path, summary
 from strata.reconcile import reconcile
-from strata.verify import verify_document
+from strata.verify import reverify_document, verify_document
 
 EXTRACTABLE = ("ingested", "extracting", "partial", "quota_exhausted")
 MAX_PASSES = 8
@@ -90,6 +90,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--extract", action="store_true")
     parser.add_argument("--until-done", action="store_true")
+    parser.add_argument("--reverify", action="store_true")
     parser.add_argument("--reconcile", action="store_true")
     parser.add_argument("--only")
     args = parser.parse_args()
@@ -109,6 +110,12 @@ def main():
                 break
             print(f"\n{len(pending)} document(s) pending after pass {attempt}; waiting {PASS_WAIT_S}s", flush=True)
             time.sleep(PASS_WAIT_S)
+    if args.reverify:
+        print("\nre-verifying quarantined claims")
+        for doc_id in ids:
+            stats = reverify_document(conn, doc_id)
+            name = db.one(conn, "select filename from documents where id = ?", (doc_id,))["filename"]
+            print(f"  {name[:50]:50} {stats}")
     if args.reconcile:
         reconcile_all(conn, ids)
     print(f"\n{time.perf_counter() - started:.1f}s total, db={db.backend()}")
