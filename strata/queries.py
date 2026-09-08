@@ -40,7 +40,8 @@ def documents(conn) -> list[dict]:
                  where c.doc_id = d.id and e.grade = 'exact') as exact,
                (select count(*) from claims c join evidence e on e.claim_id = c.id
                  where c.doc_id = d.id and e.grade = 'tokens') as weak,
-               (select count(*) from pages p where p.doc_id = d.id and p.skipped = 1) as skipped_pages
+               (select count(*) from pages p where p.doc_id = d.id and p.skipped = 1) as skipped_pages,
+               (select count(*) from metrics m where m.first_seen_doc = d.id) as new_metrics
         from documents d order by d.id
         """,
     )

@@ -6,8 +6,9 @@ from pathlib import Path
 import pymupdf
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, Response, UploadFile
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
-from . import __version__, config, db, ingest, pipeline, queries
+from . import __version__, ask, config, db, ingest, pipeline, providers, queries
 
 WEB = Path(__file__).resolve().parent.parent / "web"
 LOCK = threading.Lock()
@@ -158,6 +159,34 @@ def list_entities():
 def get_answer(entity: str, metric: str, period: str | None = None):
     with connection() as conn:
         return queries.answer(conn, entity, metric, period)
+
+
+class Question(BaseModel):
+    question: str
+
+
+@app.post("/ask")
+def post_ask(body: Question, x_gemini_key: str | None = Header(default=None)):
+    if not body.question.strip():
+        raise HTTPException(400, "The question is empty.")
+    with connection() as conn:
+        entities = [(e["name_canon"], e["claims"]) for e in queries.entities(conn) if e["claims"]]
+        metrics = [(m["key"], m["claim_count"]) for m in queries.metrics(conn)]
+    try:
+        if x_gemini_key:
+            provider = providers.get_provider("gemini", api_key=x_gemini_key, backend="aistudio")
+        else:
+            provider = providers.get_provider()
+        coords, cached = ask.coordinates(body.question, entities, metrics, provider)
+    except Exception as error:
+        raise HTTPException(503, f"The model could not be reached: {str(error)[:200]}") from error
+    if not coords:
+        return {"found": False, "reason": "no entity and metric in the layer fit that question", "coordinates": None}
+    with connection() as conn:
+        data = queries.answer(conn, coords["entity"], coords["metric"], coords["period"])
+    data["coordinates"] = coords
+    data["cached"] = cached
+    return data
 
 
 @app.get("/pages/{doc_id}/{page_no}.png")

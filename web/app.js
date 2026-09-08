@@ -67,6 +67,7 @@ async function documentsView() {
       <td class="py-2 pr-3 text-sm mono">${d.exact}</td>
       <td class="py-2 pr-3 text-sm mono">${d.weak}</td>
       <td class="py-2 pr-3 text-sm mono">${d.quarantined}</td>
+      <td class="py-2 pr-3 text-sm mono">${d.new_metrics}</td>
       <td class="py-2 text-xs mono text-slate-500">${esc(d.model || "")}</td>
     </tr>`).join("");
   const rc = data.relations;
@@ -92,9 +93,9 @@ async function documentsView() {
       <table class="w-full min-w-[900px]">
         <thead class="text-left text-xs uppercase tracking-wide text-slate-500"><tr>
           <th class="pb-2 pr-3">Document</th><th class="pb-2 pr-3">Publisher</th><th class="pb-2 pr-3">Pages</th><th class="pb-2 pr-3">Status</th>
-          <th class="pb-2 pr-3">Claims</th><th class="pb-2 pr-3">Exact</th><th class="pb-2 pr-3">Weak</th><th class="pb-2 pr-3">Quarantined</th><th class="pb-2">Model</th>
+          <th class="pb-2 pr-3">Claims</th><th class="pb-2 pr-3">Exact</th><th class="pb-2 pr-3">Weak</th><th class="pb-2 pr-3">Quarantined</th><th class="pb-2 pr-3" title="metric keys this document introduced to the registry">New keys</th><th class="pb-2">Model</th>
         </tr></thead>
-        <tbody>${rows || '<tr><td class="py-4 text-sm text-slate-500" colspan="9">No documents yet.</td></tr>'}</tbody>
+        <tbody>${rows || '<tr><td class="py-4 text-sm text-slate-500" colspan="10">No documents yet.</td></tr>'}</tbody>
       </table>
     </section>`;
   document.getElementById("upload").onsubmit = async (e) => {
@@ -141,7 +142,7 @@ async function factsView() {
         <h2 class="font-semibold">Metric registry</h2>
         <p class="mt-1 text-xs text-slate-500">${state.metrics.length} keys, grown from the documents. Click one to filter.</p>
         <ul class="mt-2 max-h-[70vh] overflow-y-auto text-sm">
-          ${state.metrics.map((m) => `<li class="flex justify-between gap-2 border-t border-slate-100 py-1"><button class="text-left mono text-xs text-indigo-800" onclick="setMetric('${esc(m.key)}')">${esc(m.key)}${m.aliases.length ? `<span class="text-slate-400"> +${m.aliases.length}</span>` : ""}</button><span class="mono text-xs text-slate-500">${m.claim_count}</span></li>`).join("")}
+          ${state.metrics.map((m) => `<li class="flex justify-between gap-2 border-t border-slate-100 py-1"><button class="text-left mono text-xs text-indigo-800" title="first seen in ${esc(m.first_seen || "")}${m.aliases.length ? `; also ${esc(m.aliases.join(", "))}` : ""}" onclick="setMetric('${esc(m.key)}')">${esc(m.key)}${m.aliases.length ? `<span class="text-slate-400"> +${m.aliases.length}</span>` : ""}</button><span class="mono text-xs text-slate-500">${m.claim_count}</span></li>`).join("")}
         </ul>
       </aside>
     </div>`;
@@ -245,6 +246,11 @@ async function answerView() {
     <section class="rounded border border-slate-200 bg-white p-4">
       <h2 class="font-semibold">Answer</h2>
       <p class="mt-1 text-sm text-slate-600">The current value for an entity, metric and period, with everything it superseded and why. Nothing here is generated: it is a lookup over the relations table.</p>
+      <form id="qform" class="mt-3 flex flex-wrap items-end gap-3 text-sm">
+        <label class="grow">Ask in plain English<input name="q" value="${esc(p.q || "")}" class="block w-full rounded border border-slate-300 px-2 py-1" placeholder="What was India's GDP growth in FY25?" /></label>
+        <button class="rounded bg-indigo-800 px-3 py-1.5 text-white">Ask</button>
+        <span id="qread" class="basis-full text-xs text-slate-500">One model request turns the question into an entity, a metric and a period. The answer itself is the same lookup as below.</span>
+      </form>
       <form id="aform" class="mt-3 flex flex-wrap items-end gap-3 text-sm">
         <label>Entity<input name="entity" list="entity-list" value="${esc(p.entity || "")}" class="block w-48 rounded border border-slate-300 px-2 py-1" required /></label>
         <label>Metric<input name="metric" list="metric-list" value="${esc(p.metric || "")}" class="block w-56 rounded border border-slate-300 px-2 py-1" required /></label>
@@ -260,15 +266,39 @@ async function answerView() {
     state.answerQuery = Object.fromEntries(new FormData(e.target).entries());
     renderAnswer();
   };
-  if (p.entity && p.metric) renderAnswer();
+  document.getElementById("qform").onsubmit = async (e) => {
+    e.preventDefault();
+    const question = e.target.q.value.trim();
+    const read = document.getElementById("qread");
+    const box = document.getElementById("answer");
+    if (!question) return;
+    read.textContent = "Asking…";
+    let data;
+    try {
+      data = await api("/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question }) });
+    } catch (err) { read.textContent = err.message; return; }
+    if (!data.coordinates) { read.textContent = data.reason; box.innerHTML = ""; return; }
+    const c = data.coordinates;
+    read.innerHTML = `Read as <span class="mono">${esc(c.entity)} · ${esc(c.metric)} · ${esc(c.period || "any period")}</span>${data.cached ? " (replayed from cache)" : ""}`;
+    state.answerQuery = { entity: c.entity, metric: c.metric, period: c.period || "", q: question };
+    const form = document.getElementById("aform");
+    form.entity.value = c.entity; form.metric.value = c.metric; form.period.value = c.period || "";
+    showAnswer(box, data);
+  };
+  if (p.q && !(p.entity && p.metric)) document.getElementById("qform").requestSubmit();
+  else if (p.entity && p.metric) renderAnswer();
 }
 
 async function renderAnswer() {
   const q = state.answerQuery;
-  const params = new URLSearchParams(Object.fromEntries(Object.entries(q).filter(([, v]) => v)));
+  const params = new URLSearchParams(Object.fromEntries(Object.entries(q).filter(([k, v]) => v && k !== "q")));
   const box = document.getElementById("answer");
   let data;
   try { data = await api(`/answer?${params}`); } catch (err) { box.innerHTML = `<div class="text-sm text-red-700">${esc(err.message)}</div>`; return; }
+  showAnswer(box, data);
+}
+
+function showAnswer(box, data) {
   if (!data.found) { box.innerHTML = `<div class="text-sm text-slate-600">${esc(data.reason)}</div>`; return; }
   const list = (title, items, render) => items.length ? `<h3 class="mt-5 text-sm font-semibold text-slate-600">${title}</h3><div class="mt-2 grid gap-3 md:grid-cols-2">${items.map(render).join("")}</div>` : "";
   box.innerHTML = `
