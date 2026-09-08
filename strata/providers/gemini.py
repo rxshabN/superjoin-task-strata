@@ -45,10 +45,14 @@ class GeminiProvider:
             time.sleep(gap)
 
     def generate(self, pdf_bytes: bytes, prompt: str) -> Response:
-        parts = [
-            types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf"),
-            types.Part.from_text(text=prompt),
-        ]
+        return self._request(
+            [types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf"), types.Part.from_text(text=prompt)]
+        )
+
+    def generate_text(self, prompt: str) -> Response:
+        return self._request([types.Part.from_text(text=prompt)])
+
+    def _request(self, parts: list) -> Response:
         result = None
         retries = {429: 0, 503: 0}
         while result is None:

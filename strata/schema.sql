@@ -102,3 +102,9 @@ create table if not exists relations (
 );
 
 create index if not exists relations_kind on relations(kind);
+
+create table if not exists metric_aliases (
+    alias text primary key,
+    key text not null,
+    source text
+);

@@ -22,10 +22,16 @@ class OllamaProvider:
         return [base64.b64encode(page.get_pixmap(dpi=self.dpi).tobytes("png")).decode("ascii") for page in doc]
 
     def generate(self, pdf_bytes: bytes, prompt: str) -> Response:
+        return self._request(prompt, self._images(pdf_bytes))
+
+    def generate_text(self, prompt: str) -> Response:
+        return self._request(prompt, [])
+
+    def _request(self, prompt: str, images: list[str]) -> Response:
         body = {
             "model": self.model,
             "prompt": prompt,
-            "images": self._images(pdf_bytes),
+            "images": images,
             "stream": False,
             "options": {"temperature": 0, "seed": 7, "num_predict": 16384},
         }

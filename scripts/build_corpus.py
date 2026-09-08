@@ -5,6 +5,7 @@ import time
 from strata import config, db, providers
 from strata.cache import Cache
 from strata.canon import canonicalise_document, reset
+from strata.consolidate import consolidate
 from strata.extract import extract_document
 from strata.ingest import ingest_path, summary
 from strata.reconcile import reconcile
@@ -92,6 +93,7 @@ def main():
     parser.add_argument("--until-done", action="store_true")
     parser.add_argument("--reverify", action="store_true")
     parser.add_argument("--reconcile", action="store_true")
+    parser.add_argument("--consolidate", action="store_true")
     parser.add_argument("--only")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -116,7 +118,17 @@ def main():
             stats = reverify_document(conn, doc_id)
             name = db.one(conn, "select filename from documents where id = ?", (doc_id,))["filename"]
             print(f"  {name[:50]:50} {stats}")
-    if args.reconcile:
+    if args.reconcile or args.consolidate:
+        reconcile_all(conn, ids)
+    if args.consolidate:
+        stats = consolidate(conn)
+        print(f"\nconsolidation: {stats['keys']} keys, cached={stats['cached']}, tokens_out={stats['tokens_out']}")
+        for group in stats["proposed"]:
+            print(f"  proposed {group['keep']} <- {group['merge']} ({group['why']})")
+        for alias, keep in stats["applied"]:
+            print(f"  applied  {alias} -> {keep}")
+        for alias, keep, reason in stats["rejected"]:
+            print(f"  rejected {alias} -> {keep}: {reason}")
         reconcile_all(conn, ids)
     print(f"\n{time.perf_counter() - started:.1f}s total, db={db.backend()}")
 

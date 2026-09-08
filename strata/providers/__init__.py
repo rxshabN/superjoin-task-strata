@@ -17,18 +17,21 @@ def get_provider(name: str | None = None, **kwargs) -> Provider:
 
 
 def generate(
-    pdf_bytes: bytes,
+    pdf_bytes: bytes | None,
     prompt: str,
     provider: Provider,
     cache: Cache | None = None,
     key: str | None = None,
 ) -> Response:
     cache = cache or Cache()
-    key = key or cache.key(provider.name, provider.model, prompt, pdf_bytes)
+    if pdf_bytes is None:
+        key = key or cache.key(provider.name, provider.model, prompt)
+    else:
+        key = key or cache.key(provider.name, provider.model, prompt, pdf_bytes)
     hit = cache.get(key)
     if hit:
         return Response.from_record(hit)
-    response = provider.generate(pdf_bytes, prompt)
+    response = provider.generate_text(prompt) if pdf_bytes is None else provider.generate(pdf_bytes, prompt)
     cache.put(key, response.to_record())
     return response
 

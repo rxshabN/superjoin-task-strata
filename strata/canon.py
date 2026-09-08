@@ -434,11 +434,24 @@ def same_measure(a: str, b: str) -> bool:
     return [singular(t) for t in a.split("_")] == [singular(t) for t in b.split("_")]
 
 
+def stored_alias(conn, key: str) -> str | None:
+    row = db.one(conn, "select key from metric_aliases where alias = ?", (key,))
+    return row["key"] if row and row["key"] != key else None
+
+
 def resolve_metric(conn, key: str, label: str | None, doc_id: int) -> str:
     rows = db.rows(conn, "select key, aliases_json, claim_count from metrics")
     index = {r["key"]: json.loads(r["aliases_json"]) for r in rows}
     counts = {r["key"]: r["claim_count"] for r in rows}
     target = next((k for k, aliases in index.items() if key in aliases and k != key), None)
+    if target is None:
+        target = stored_alias(conn, key)
+        if target is not None and target not in index:
+            conn.execute(
+                "insert into metrics (key, label, first_seen_doc, claim_count) values (?, ?, ?, 0)",
+                (target, label, doc_id),
+            )
+            index[target], counts[target] = [], 0
     if target is None:
         match = next((k for k in index if k != key and same_measure(key, k)), None)
         if match is None:
@@ -451,9 +464,20 @@ def resolve_metric(conn, key: str, label: str | None, doc_id: int) -> str:
         target = match
         if key in index and counts.get(key, 0) > counts.get(target, 0):
             key, target = target, key
+    if key not in index[target]:
         index[target].append(key)
         conn.execute("update metrics set aliases_json = ? where key = ?", (json.dumps(index[target]), target))
     if key in index:
+        conn.execute(
+            "update claim_canon set block_key = replace(block_key, '|' || ? || '|', '|' || ? || '|')"
+            " where metric_key = ? and instr(block_key, '|' || ? || '|') > 0",
+            (key, target, key, key),
+        )
+        conn.execute(
+            "update claim_canon set block_key = substr(block_key, 1, length(block_key) - length(?)) || ?"
+            " where metric_key = ? and substr(block_key, -length('|' || ?)) = '|' || ?",
+            (key, target, key, key, key),
+        )
         conn.execute("update claim_canon set metric_key = ? where metric_key = ?", (target, key))
         conn.execute("update metrics set claim_count = claim_count + ? where key = ?", (counts[key], target))
         conn.execute("delete from metrics where key = ?", (key,))
