@@ -1,0 +1,6 @@
+#!include:.gitignore
+.git
+.claude
+.gcloudignore
+.dockerignore
+superjoin-vit-2026-assignment.pdf

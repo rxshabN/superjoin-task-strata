@@ -20,7 +20,7 @@ def connect(cfg: config.Settings | None = None, path: Path | None = None):
 
         replica = path or cfg.replica_path
         replica.parent.mkdir(parents=True, exist_ok=True)
-        conn = libsql.connect(str(replica), sync_url=cfg.turso_url, auth_token=cfg.turso_token)
+        conn = libsql.connect(str(replica), sync_url=cfg.turso_url, auth_token=cfg.turso_token, isolation_level=None)
         conn.sync()
         return conn
     target = path or cfg.db_path

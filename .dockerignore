@@ -1,0 +1,15 @@
+.git
+.claude
+.venv
+.env
+.env.local
+__pycache__
+*.py[cod]
+.pytest_cache
+.ruff_cache
+data/uploads
+data/replica.db*
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+superjoin-vit-2026-assignment.pdf
