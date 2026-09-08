@@ -87,6 +87,9 @@ def relate(a: dict, b: dict) -> dict | None:
         return _relation("corroborates", a, b, explanation="; ".join(notes) or None)
     if scope_differs:
         return _relation("reconciled", a, b, "scope", f"{a['scope_canon']} vs {b['scope_canon']}")
+    if _same_publisher(a, b) and labels_differ(a, b):
+        note = f"labels differ: {a.get('label')} vs {b.get('label')}"
+        return _relation("reconciled", a, b, "label", f"same publisher, two line items; {note}", "low")
     if basis_differs:
         ra, rb = RANK.get(a["basis_canon"]), RANK.get(b["basis_canon"])
         if ra and rb:
@@ -108,9 +111,6 @@ def relate(a: dict, b: dict) -> dict | None:
     if one_unstated:
         return _relation("reconciled", a, b, "scope", "scope unstated on one side; values differ", confidence="low")
     if _same_publisher(a, b):
-        if labels_differ(a, b):
-            note = f"labels differ: {a.get('label')} vs {b.get('label')}"
-            return _relation("reconciled", a, b, "label", f"same publisher, two line items; {note}", "low")
         va, vb = _vintage(a), _vintage(b)
         if va and vb and va != vb:
             new, old = (a, b) if va > vb else (b, a)

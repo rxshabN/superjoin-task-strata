@@ -61,6 +61,9 @@ SCALES = {
     "tn": 1e12,
 }
 
+CURRENCY_SCALES = {"m": 1e6, "b": 1e9}
+PAGE_CURRENCY = re.compile(r"us\$|[₹€£$]|\brs\.|\b(?:usd|inr|eur|gbp|rupees?|euros?|pounds?|dollars?)\b")
+
 PCT = {
     "percent",
     "per cent",
@@ -161,6 +164,9 @@ def _parse_date(text: str) -> date | None:
     m = re.fullmatch(r"(\d{1,2})(?:st|nd|rd|th)? ([a-z]+)\.? (\d{4})", s)
     if m and m[2] in MONTHS:
         return _date(int(m[3]), MONTHS[m[2]], int(m[1]))
+    m = re.fullmatch(r"(\d{1,2})[-/ ]([a-z]+)\.?[-/ ]'?(\d{2}|\d{4})", s)
+    if m and m[2] in MONTHS:
+        return _date(_year(m[3]), MONTHS[m[2]], int(m[1]))
     return None
 
 
@@ -244,9 +250,10 @@ def parse_period(raw) -> tuple[str, str] | None:
         if span is None:
             s = re.sub(r"\([^)]*\)", "", s).strip()
             s = re.sub(r"^(q[1-4]|h[12]) of ", r"\1 ", s)
-            s = re.sub(r"^(q[1-4])\s*:\s*", r"\1 ", s)
             s = re.sub(r"^([1-4])q", r"q\1", s)
             s = re.sub(r"^([12])h", r"h\1", s)
+            s = re.sub(r"^(q[1-4])\s*[-/:]\s*(?=\S)", r"\1 ", s)
+            s = re.sub(r"^(\d{4})\s*[-/:]\s*q([1-4])$", r"\1 q\2", s)
             s = re.sub(r"^(first|second|third|fourth) quarter of ", lambda m: f"q{QUARTER_WORDS[m[1]]} ", s)
             s = re.sub(r"(?<=\d)\s?(be|re|ae|fae|sae|pe|p|e|f)$", "", s).strip()
             span = _parse_span(s) if s else None
@@ -406,6 +413,10 @@ def parse_unit(raw) -> tuple[str, float] | None:
             continue
         else:
             rest.append(t)
+    if currency and rest and all(t in CURRENCY_SCALES for t in rest):
+        for t in rest:
+            scale *= CURRENCY_SCALES[t]
+        rest = []
     if currency:
         return currency, scale
     if rest:
@@ -413,6 +424,18 @@ def parse_unit(raw) -> tuple[str, float] | None:
     if scale != 1.0:
         return "count", scale
     return s, 1.0
+
+
+def bare_scale(raw) -> bool:
+    tokens = [t.rstrip(".") for t in re.findall(r"us\$|[₹€$£]|[a-z\u00c0-\u024f']+|\d+s?|'000", squash(raw))]
+    return any(t in SCALES for t in tokens) and all(
+        t in SCALES or t in ("in", "of", "amount", "amounts") for t in tokens
+    )
+
+
+def page_currency(text) -> str | None:
+    found = {CURRENCIES[m] for m in (m.group(0) for m in PAGE_CURRENCY.finditer(squash(text))) if m in CURRENCIES}
+    return found.pop() if len(found) == 1 else None
 
 
 def parse_value(raw) -> float | None:
@@ -563,6 +586,13 @@ def canonicalise_claim(conn, claim: dict, publisher: str | None = None) -> dict:
     metric = resolve_metric(conn, claim["metric_raw"], claim.get("label"), claim["doc_id"])
     period = parse_period(claim.get("period_raw"))
     unit = parse_unit(claim.get("unit_raw"))
+    if unit and unit[0] == "count" and bare_scale(claim.get("unit_raw")):
+        page = db.one(
+            conn, "select text from pages where doc_id = ? and page_no = ?", (claim["doc_id"], claim.get("page_no"))
+        )
+        currency = page_currency(page["text"] if page else "")
+        if currency:
+            unit = (currency, unit[1])
     number = parse_value(claim.get("value_raw"))
     basis = claim.get("basis_raw") or "actual"
     if basis == "actual":
