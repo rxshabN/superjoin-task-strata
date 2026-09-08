@@ -50,6 +50,7 @@ def test_ask_endpoint_answers_and_replays(client, monkeypatch):
     miss = client.post("/ask", json={"question": "How tall is the Eiffel tower?"}).json()
     assert miss["found"] is False and miss["coordinates"] is None
     assert client.post("/ask", json={"question": "   "}).status_code == 400
+    assert client.post("/ask", json={"question": "x" * 501}).status_code == 400
 
 
 def test_cached_question_needs_no_key(client, monkeypatch):

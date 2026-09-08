@@ -74,6 +74,18 @@ def test_char_span_tolerates_line_breaks():
     assert char_span("nothing like this", text) is None
 
 
+def test_char_span_is_linear_on_repetitive_text():
+    import time
+
+    page = "1 1 1 1 1 " * 2000
+    started = time.perf_counter()
+    assert char_span("1 " * 29 + "2", page) is None
+    assert char_span("1 1 1 1 1 1 1 1 1 1", page) == (0, 19)
+    assert time.perf_counter() - started < 1.0
+    assert char_span("Revenue FROM operations", "the revenue from\noperations rose") == (4, 27)
+    assert char_span("", "anything") is None
+
+
 def test_verify_document_on_the_deck(tmp_path):
     conn = db.init(db.connect(path=tmp_path / "v.db"))
     doc = ingest_path(conn, DECK)

@@ -8,6 +8,7 @@ from . import db, ingest
 
 GRADES = ("exact", "nearby", "tokens")
 WORD_SHARE = 0.7
+MAX_GAP = 4
 
 
 def normalize(text: str) -> str:
@@ -51,12 +52,22 @@ def grade(quote: str, page_text: str, prev_text: str = "", next_text: str = "") 
 
 
 def char_span(quote: str, page_text: str) -> tuple[int, int] | None:
-    parts = [re.escape(t) for t in quote.split()]
+    parts = [t.lower() for t in quote.split()]
     if not parts:
         return None
-    pattern = r"[\s\S]{0,4}?".join(parts)
-    m = re.search(pattern, page_text, re.I)
-    return (m.start(), m.end()) if m else None
+    low = page_text.lower()
+    start = low.find(parts[0])
+    while start != -1:
+        pos = start + len(parts[0])
+        for part in parts[1:]:
+            found = low.find(part, pos, pos + MAX_GAP + len(part))
+            if found == -1:
+                break
+            pos = found + len(part)
+        else:
+            return start, pos
+        start = low.find(parts[0], start + 1)
+    return None
 
 
 def bboxes(page, quote: str) -> list[list[float]]:

@@ -97,6 +97,47 @@ def test_ingest_registers_pages(tmp_path):
     }
 
 
+def test_ingest_survives_a_duplicate_insert_race(tmp_path):
+    conn = db.init(db.connect(path=tmp_path / "race.db"))
+    pdf = make_pdf([" ".join(["x"] * 50)])
+    first = ingest_bytes(conn, pdf, "a.pdf")
+    from strata import ingest as ingest_module
+
+    real_one = ingest_module.db.one
+    calls = {"n": 0}
+
+    def racing_one(c, sql, params=()):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return None
+        return real_one(c, sql, params)
+
+    ingest_module.db.one = racing_one
+    try:
+        again = ingest_bytes(conn, pdf, "a.pdf")
+    finally:
+        ingest_module.db.one = real_one
+    assert again["new"] is False and again["id"] == first["id"]
+    assert db.one(conn, "select count(*) as n from documents")["n"] == 1
+
+
+def test_ingest_tolerates_a_broken_page(tmp_path, monkeypatch):
+    conn = db.init(db.connect(path=tmp_path / "broken.db"))
+    real = pymupdf.Page.get_text
+
+    def flaky(self, *args, **kwargs):
+        if self.number == 1:
+            raise RuntimeError("cannot parse content stream")
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(pymupdf.Page, "get_text", flaky)
+    result = ingest_bytes(conn, make_pdf(["word " * 50, "word " * 50, "word " * 50]), "flaky.pdf")
+    rows = db.rows(conn, "select page_no, word_count, skipped from pages order by page_no")
+    counts = [r["word_count"] for r in rows]
+    assert result["page_count"] == 3 and counts[0] > 0 and counts[1] == 0 and counts[2] == counts[0]
+    assert rows[1]["skipped"] == 1
+
+
 def test_ingest_is_idempotent(tmp_path):
     conn = db.init(db.connect(path=tmp_path / "t.db"))
     pdf = make_pdf([" ".join(["x"] * 50)])

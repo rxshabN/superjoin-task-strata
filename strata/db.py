@@ -40,6 +40,7 @@ def init(conn):
         ("claim_canon", "precision", "real"),
         ("documents", "model", "text"),
         ("documents", "error", "text"),
+        ("documents", "updated_at", "text"),
     ):
         columns = {r["name"] for r in rows(conn, f"pragma table_info({table})")}
         if column not in columns:

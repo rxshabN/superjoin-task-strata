@@ -115,10 +115,17 @@ def thin(text: str, words: int) -> bool:
     return words < THIN_WORDS and len(re.findall(r"\d[\d,.]*", text)) < THIN_NUMBERS
 
 
+def page_text(page) -> str:
+    try:
+        return page.get_text()
+    except Exception:
+        return ""
+
+
 def page_records(doc) -> list[tuple]:
     records = []
     for page_no, page in enumerate(doc, start=1):
-        text = page.get_text()
+        text = page_text(page)
         words = len(text.split())
         hints = detect_hints(text)
         records.append((page_no, text, words, json.dumps(hints, ensure_ascii=False), int(thin(text, words))))
@@ -140,10 +147,25 @@ def ingest_bytes(conn, pdf_bytes: bytes, filename: str) -> dict:
     started = time.perf_counter()
     doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
     records = page_records(doc)
-    conn.execute(
-        "insert into documents (sha256, filename, pdf, page_count, status, ingested_at) values (?, ?, ?, ?, ?, ?)",
-        (sha, filename, pdf_bytes, len(records), "ingested", datetime.now(UTC).isoformat(timespec="seconds")),
-    )
+    now = datetime.now(UTC).isoformat(timespec="seconds")
+    try:
+        conn.execute(
+            "insert into documents (sha256, filename, pdf, page_count, status, ingested_at, updated_at)"
+            " values (?, ?, ?, ?, ?, ?, ?)",
+            (sha, filename, pdf_bytes, len(records), "ingested", now, now),
+        )
+    except Exception:
+        existing = db.one(conn, "select id, page_count, status from documents where sha256 = ?", (sha,))
+        if not existing:
+            raise
+        return {
+            "id": existing["id"],
+            "sha256": sha,
+            "filename": filename,
+            "page_count": existing["page_count"],
+            "status": existing["status"],
+            "new": False,
+        }
     doc_id = db.one(conn, "select id from documents where sha256 = ?", (sha,))["id"]
     conn.executemany(
         "insert into pages (doc_id, page_no, text, word_count, hints_json, skipped) values (?, ?, ?, ?, ?, ?)",

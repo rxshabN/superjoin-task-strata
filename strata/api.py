@@ -12,6 +12,7 @@ from . import __version__, ask, config, db, ingest, pipeline, providers, queries
 
 WEB = Path(__file__).resolve().parent.parent / "web"
 LOCK = threading.Lock()
+MAX_QUESTION = 500
 
 
 @asynccontextmanager
@@ -79,9 +80,11 @@ async def upload_document(
     if page_count > cfg.max_upload_pages:
         raise HTTPException(413, f"The PDF has {page_count} pages; the limit is {cfg.max_upload_pages}.")
     with connection() as conn:
+        db.refresh(conn)
         result = ingest.ingest_bytes(conn, data, file.filename or "upload.pdf")
-        status = db.one(conn, "select status from documents where id = ?", (result["id"],))["status"]
-    if status in pipeline.PENDING:
+        row = db.one(conn, "select status, updated_at from documents where id = ?", (result["id"],))
+    status = row["status"]
+    if status in pipeline.PENDING and not pipeline.in_flight(status, row["updated_at"]):
         background.add_task(pipeline.process_document, result["id"], x_gemini_key)
         status = "queued"
     return {"id": result["id"], "status": status, "new": result["new"], "page_count": result["page_count"]}
@@ -178,6 +181,8 @@ class Question(BaseModel):
 def post_ask(body: Question, x_gemini_key: str | None = Header(default=None)):
     if not body.question.strip():
         raise HTTPException(400, "The question is empty.")
+    if len(body.question) > MAX_QUESTION:
+        raise HTTPException(400, f"The question is longer than {MAX_QUESTION} characters.")
     with connection() as conn:
         entities = [(e["name_canon"], e["claims"]) for e in queries.entities(conn) if e["claims"]]
         metrics = [(m["key"], m["claim_count"]) for m in queries.metrics(conn)]

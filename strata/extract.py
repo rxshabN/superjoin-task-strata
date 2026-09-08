@@ -141,9 +141,18 @@ def parse(text: str) -> tuple[dict | None, list[dict], int]:
             malformed += 1
             continue
         kind = obj.get("type")
+        page = obj.get("page")
+        if isinstance(page, str) and page.strip().isdigit():
+            obj["page"] = page = int(page)
         if kind == "document":
             document = obj
-        elif kind == "claim" and isinstance(obj.get("page"), int) and obj.get("quote") and obj.get("metric"):
+        elif (
+            kind == "claim"
+            and isinstance(page, int)
+            and not isinstance(page, bool)
+            and obj.get("quote")
+            and obj.get("metric")
+        ):
             claims.append(obj)
         else:
             malformed += 1
@@ -268,7 +277,8 @@ def extract_document(conn, doc_id: int, provider=None, cache: Cache | None = Non
     started = time.perf_counter()
     clear_document(conn, doc_id)
     conn.execute(
-        "update documents set status = 'extracting', model = ?, error = null where id = ?", (provider.model, doc_id)
+        "update documents set status = 'extracting', model = ?, error = null, updated_at = ? where id = ?",
+        (provider.model, datetime.now(UTC).isoformat(timespec="seconds"), doc_id),
     )
     db.commit(conn)
     status = "extracted"
@@ -317,9 +327,10 @@ def extract_document(conn, doc_id: int, provider=None, cache: Cache | None = Non
             start = next_start
         if status in ("quota_exhausted", "partial"):
             break
+    stamp = datetime.now(UTC).isoformat(timespec="seconds")
     conn.execute(
-        "update documents set status = ?, error = ?, ingested_at = ? where id = ?",
-        (status, outcome_note(status, stats), datetime.now(UTC).isoformat(timespec="seconds"), doc_id),
+        "update documents set status = ?, error = ?, ingested_at = ?, updated_at = ? where id = ?",
+        (status, outcome_note(status, stats), stamp, stamp, doc_id),
     )
     db.commit(conn)
     stats["status"] = status

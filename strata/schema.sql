@@ -11,7 +11,8 @@ create table if not exists documents (
     malformed_lines integer not null default 0,
     model text,
     error text,
-    ingested_at text
+    ingested_at text,
+    updated_at text
 );
 
 create table if not exists pages (

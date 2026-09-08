@@ -81,14 +81,16 @@ def test_parse_handles_noise():
             '{"type":"claim","page":3,"subject":"X","metric":"revenue","value":10,"quote":"revenue 10"}',
             "not json",
             '{"type":"claim","page":"3","quote":"missing metric"}',
+            '{"type":"claim","page":"5","subject":"X","metric":"tax","value":2,"quote":"tax 2"}',
+            '{"type":"claim","page":true,"subject":"X","metric":"tax","value":2,"quote":"tax 2"}',
             '{"type":"claim","page":4,"subject":"X","metric":"cost","value":5,"quote":"cost 5",',
             "```",
         ]
     )
     document, claims, malformed = parse(text)
     assert document["title"] == "T"
-    assert [c["page"] for c in claims] == [3]
-    assert malformed == 3
+    assert [c["page"] for c in claims] == [3, 5]
+    assert malformed == 4
 
 
 def test_insert_claims_keeps_only_dict_keys(tmp_path):

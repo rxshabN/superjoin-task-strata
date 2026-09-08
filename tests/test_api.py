@@ -223,13 +223,38 @@ def test_reupload_requeues_a_document_stuck_mid_pipeline(client, monkeypatch):
     pdf = make_pdf(["Acme revenue was 12 crore in FY24 " * 5])
     doc_id = client.post("/documents", files={"file": ("acme.pdf", pdf, "application/pdf")}).json()["id"]
     assert client.get(f"/documents/{doc_id}").json()["status"] == "ready"
+    connection = __import__("strata.api", fromlist=["connection"]).connection
     for stuck in ("verifying", "reconciling", "failed"):
-        with __import__("strata.api", fromlist=["connection"]).connection() as conn:
-            conn.execute("update documents set status = ? where id = ?", (stuck, doc_id))
+        with connection() as conn:
+            conn.execute("update documents set status = ?, updated_at = null where id = ?", (stuck, doc_id))
             conn.commit()
         again = client.post("/documents", files={"file": ("acme.pdf", pdf, "application/pdf")}).json()
         assert again["new"] is False and again["status"] == "queued"
         assert client.get(f"/documents/{doc_id}").json()["status"] == "ready"
+    with connection() as conn:
+        conn.execute(
+            "update documents set status = 'extracting', updated_at = ? where id = ?", (pipeline.now(), doc_id)
+        )
+        conn.commit()
+    busy = client.post("/documents", files={"file": ("acme.pdf", pdf, "application/pdf")}).json()
+    assert busy["new"] is False and busy["status"] == "extracting"
+    assert client.get(f"/documents/{doc_id}").json()["status"] == "extracting"
+    with connection() as conn:
+        conn.execute("update documents set updated_at = '2020-01-01T00:00:00+00:00' where id = ?", (doc_id,))
+        conn.commit()
+    stale = client.post("/documents", files={"file": ("acme.pdf", pdf, "application/pdf")}).json()
+    assert stale["status"] == "queued" and client.get(f"/documents/{doc_id}").json()["status"] == "ready"
+
+
+def test_worker_claims_a_document_once(client, monkeypatch):
+    from strata import pipeline
+
+    monkeypatch.setattr(pipeline.providers, "get_provider", lambda *a, **k: ScriptedProvider())
+    pdf = make_pdf(["Acme revenue was 12 crore in FY24 " * 5])
+    doc_id = client.post("/documents", files={"file": ("acme.pdf", pdf, "application/pdf")}).json()["id"]
+    assert client.get(f"/documents/{doc_id}").json()["status"] == "ready"
+    assert pipeline.process_document(doc_id) == {"status": "skipped"}
+    assert client.get(f"/documents/{doc_id}").json()["claims"] == 1
 
 
 def test_health_and_static(client):
