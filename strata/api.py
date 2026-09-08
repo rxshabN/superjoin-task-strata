@@ -53,6 +53,7 @@ def health():
 @app.get("/documents")
 def list_documents():
     with connection() as conn:
+        db.refresh(conn)
         return {"documents": queries.documents(conn), "relations": queries.relation_counts(conn)}
 
 
@@ -84,6 +85,7 @@ async def upload_document(
 @app.get("/documents/{doc_id}")
 def get_document(doc_id: int):
     with connection() as conn:
+        db.refresh(conn)
         doc = queries.document(conn, doc_id)
     if not doc:
         raise HTTPException(404, "No such document.")

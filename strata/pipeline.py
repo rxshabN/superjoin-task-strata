@@ -16,7 +16,7 @@ def _status(conn, doc_id: int, status: str, error: str | None = None):
 
 def process_document(doc_id: int, api_key: str | None = None) -> dict:
     with LOCK:
-        conn = db.connect()
+        conn = db.connect(worker=True)
         try:
             if api_key:
                 provider = providers.get_provider("gemini", api_key=api_key, backend="aistudio")

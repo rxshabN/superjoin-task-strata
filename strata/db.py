@@ -11,7 +11,7 @@ def backend(cfg: config.Settings | None = None) -> str:
     return "turso" if cfg.db == "turso" else "sqlite"
 
 
-def connect(cfg: config.Settings | None = None, path: Path | None = None):
+def connect(cfg: config.Settings | None = None, path: Path | None = None, worker: bool = False):
     cfg = cfg or config.settings
     if backend(cfg) == "turso":
         if not (cfg.turso_url and cfg.turso_token):
@@ -19,6 +19,8 @@ def connect(cfg: config.Settings | None = None, path: Path | None = None):
         import libsql
 
         replica = path or cfg.replica_path
+        if worker and path is None:
+            replica = replica.with_name(f"{replica.stem}-worker{replica.suffix}")
         replica.parent.mkdir(parents=True, exist_ok=True)
         conn = libsql.connect(
             str(replica), sync_url=cfg.turso_url, auth_token=cfg.turso_token, isolation_level=None, sync_interval=30
@@ -46,14 +48,18 @@ def init(conn):
     return conn
 
 
-def commit(conn):
-    conn.commit()
+def refresh(conn):
     sync = getattr(conn, "sync", None)
     if sync:
         try:
             sync()
         except ValueError:
             pass
+
+
+def commit(conn):
+    conn.commit()
+    refresh(conn)
 
 
 def rows(conn, sql: str, params=()) -> list[dict]:
