@@ -62,6 +62,63 @@ SCALES = {
 }
 
 CURRENCY_SCALES = {"m": 1e6, "b": 1e9}
+MONEY_WORDS = {
+    "revenue",
+    "revenues",
+    "sales",
+    "income",
+    "profit",
+    "loss",
+    "earnings",
+    "ebitda",
+    "expense",
+    "expenses",
+    "cost",
+    "costs",
+    "cash",
+    "assets",
+    "liabilities",
+    "equity",
+    "debt",
+    "borrowings",
+    "capex",
+    "expenditure",
+    "dividend",
+    "dividends",
+    "tax",
+    "taxes",
+    "receivables",
+    "payables",
+    "investment",
+    "investments",
+    "deposits",
+    "loans",
+    "advances",
+    "turnover",
+    "amount",
+    "value",
+    "price",
+    "fees",
+    "wages",
+    "salaries",
+    "compensation",
+    "spending",
+    "budget",
+    "deficit",
+    "surplus",
+    "gdp",
+    "gva",
+    "exports",
+    "imports",
+    "remittances",
+    "reserves",
+    "funding",
+    "proceeds",
+    "repurchases",
+    "buyback",
+    "purchases",
+    "payments",
+}
 PAGE_CURRENCY = re.compile(r"us\$|[₹€£$]|\brs\.|\b(?:usd|inr|eur|gbp|rupees?|euros?|pounds?|dollars?)\b")
 
 PCT = {
@@ -433,6 +490,11 @@ def bare_scale(raw) -> bool:
     )
 
 
+def money_like(*texts) -> bool:
+    words = set(re.sub(r"[^a-z0-9\s]", " ", squash(" ".join(str(t) for t in texts if t))).split())
+    return bool(words & MONEY_WORDS)
+
+
 def page_currency(text) -> str | None:
     found = {CURRENCIES[m] for m in (m.group(0) for m in PAGE_CURRENCY.finditer(squash(text))) if m in CURRENCIES}
     return found.pop() if len(found) == 1 else None
@@ -586,7 +648,12 @@ def canonicalise_claim(conn, claim: dict, publisher: str | None = None) -> dict:
     metric = resolve_metric(conn, claim["metric_raw"], claim.get("label"), claim["doc_id"])
     period = parse_period(claim.get("period_raw"))
     unit = parse_unit(claim.get("unit_raw"))
-    if unit and unit[0] == "count" and bare_scale(claim.get("unit_raw")):
+    if (
+        unit
+        and unit[0] == "count"
+        and bare_scale(claim.get("unit_raw"))
+        and money_like(claim.get("label"), claim.get("metric_raw"), metric)
+    ):
         page = db.one(
             conn, "select text from pages where doc_id = ? and page_no = ?", (claim["doc_id"], claim.get("page_no"))
         )
