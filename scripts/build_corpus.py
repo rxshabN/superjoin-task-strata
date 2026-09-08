@@ -1,10 +1,13 @@
 import argparse
+import logging
 import time
 
 from strata import config, db, providers
 from strata.cache import Cache
+from strata.canon import canonicalise_document, reset
 from strata.extract import extract_document
 from strata.ingest import ingest_path, summary
+from strata.reconcile import reconcile
 from strata.verify import verify_document
 
 EXTRACTABLE = ("ingested", "extracting", "partial", "quota_exhausted")
@@ -44,8 +47,14 @@ def extract_all(conn, ids: list[int]):
         if doc["status"] not in EXTRACTABLE:
             print(f"\n{doc['filename']}: status {doc['status']}, skipping")
             continue
-        print(f"\n{doc['filename']}: extracting")
-        stats = extract_document(conn, doc_id, provider, cache)
+        print(f"\n{doc['filename']}: extracting", flush=True)
+        try:
+            stats = extract_document(conn, doc_id, provider, cache)
+        except Exception as error:
+            conn.execute("update documents set status = 'ingested' where id = ?", (doc_id,))
+            db.commit(conn)
+            print(f"  failed: {type(error).__name__}: {str(error)[:200]}", flush=True)
+            continue
         print(
             f"  requests={stats['requests']} cached={stats['cached']} finish={stats['finish']} "
             f"tokens_out={stats['tokens_out']} claims={stats['claims']} malformed={stats['malformed']} "
@@ -58,16 +67,34 @@ def extract_all(conn, ids: list[int]):
         )
 
 
+def reconcile_all(conn, ids: list[int]):
+    reset(conn)
+    print("\ncanonicalising")
+    for doc_id in ids:
+        doc = db.one(conn, "select filename, status from documents where id = ?", (doc_id,))
+        if doc["status"] != "extracted":
+            continue
+        stats = canonicalise_document(conn, doc_id)
+        cells = " ".join(f"{k}={v}" for k, v in stats.items())
+        print(f"  {doc['filename'][:50]:50} {cells}")
+    stats = reconcile(conn)
+    print(f"\nreconciled: {stats}")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--extract", action="store_true")
+    parser.add_argument("--reconcile", action="store_true")
     parser.add_argument("--only")
     args = parser.parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     conn = db.init(db.connect())
     started = time.perf_counter()
     ids = ingest_all(conn, args.only)
     if args.extract:
         extract_all(conn, ids)
+    if args.reconcile:
+        reconcile_all(conn, ids)
     print(f"\n{time.perf_counter() - started:.1f}s total, db={db.backend()}")
 
 

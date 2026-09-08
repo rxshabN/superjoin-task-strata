@@ -1,3 +1,4 @@
+import logging
 import time
 
 from google import genai
@@ -5,6 +6,9 @@ from google.genai import errors, types
 
 from .. import config
 from .base import Response
+
+log = logging.getLogger("strata.gemini")
+RETRY_WAITS = (30, 60, 120, 240, 300, 300, 300)
 
 
 class GeminiProvider:
@@ -43,7 +47,7 @@ class GeminiProvider:
             types.Part.from_text(text=prompt),
         ]
         result = None
-        for attempt in range(5):
+        for attempt in range(len(RETRY_WAITS) + 1):
             self._wait()
             self._last = time.monotonic()
             try:
@@ -51,10 +55,12 @@ class GeminiProvider:
                 break
             except errors.APIError as e:
                 code = getattr(e, "code", None)
-                if code in (429, 503) and attempt < 4:
-                    time.sleep(20 * (attempt + 1))
+                if code in (429, 503) and attempt < len(RETRY_WAITS):
+                    log.warning("gemini %s on attempt %d, waiting %ds", code, attempt + 1, RETRY_WAITS[attempt])
+                    time.sleep(RETRY_WAITS[attempt])
                     continue
                 if code == 400 and self._thinking and "thinking" in str(e).lower():
+                    log.warning("gemini rejected thinking_level for %s; retrying with default thinking", self.model)
                     self._thinking = False
                     continue
                 raise
