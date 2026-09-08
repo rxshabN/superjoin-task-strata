@@ -77,7 +77,7 @@ API, all JSON: `GET /health`, `GET /documents`, `POST /documents` (multipart `fi
 `GET /quarantine`, `GET /metrics`, `GET /entities`, `GET /answer?entity=&metric=&period=`,
 `POST /ask` (`{"question": "..."}`), `GET /pages/{doc}/{page}.png?claim=` for a page
 render with the claim's evidence highlighted. The UI is static files over the same API,
-and every view is addressable: `#relation/140`, `#claim/301`,
+and every view is addressable: `#relation/145`, `#claim/301`,
 `#answer?q=What%20was%20India%27s%20GDP%20growth%20in%20FY25%3F`.
 
 ## Video Demo
@@ -117,7 +117,7 @@ in ordinary Python afterwards, so all of it can be rerun from the response cache
 | Ingest | PyMuPDF text per page, word counts, and three regex hints per page: a unit declaration such as "All amounts in Indian Rupees in million", a consolidated/standalone marker, a period header. Pages under 40 words with fewer than three numbers are skipped (covers and dividers, not KPI slides). A document is keyed by SHA-256, so re-uploading is a no-op. | `documents`, `pages` |
 | Extract | 50-page slices sent as native PDF to Gemini 3.8 Flash with the page hints and the metric keys seen so far. One JSON object per line: subject, metric key, the document's own label, value, unit, period, scope, basis, a verbatim quote, and identifiers such as DIN or CIN. The first slice also returns a document line: title, publisher, publication date. Temperature 0, fixed seed, raw response cached under a hash of the PDF slice and the prompt without its two advisory lines (the registry and the skipped-page list), so the cache survives registry growth. | `claims` |
 | Verify | The quote is normalised and searched on the cited page (`exact`), on the neighbouring pages (`nearby`), then as a bag of numbers and words (`tokens`). Pass: grade, character span (a linear word-by-word scan, no regex backtracking) and bounding boxes stored. Fail: quarantine with a reason. | `evidence`, `quarantine` |
-| Canonicalise | Period strings become date intervals (FY25, 2024-25, FY2024/25, Q3:2024-25 and "first quarter of FY2025/26" all resolve; month-first dates such as 12/31/2024 are recognised when the day cannot be a month; an unreadable period leaves the claim non-comparable rather than failing the document). Units become a base unit and scaled value, with stacked scales multiplied (a lakh crore is 10^12), and the printed precision kept for tolerance. Entities resolve by identifier first, then by normalised name; a generic subject such as "the Company" resolves to the document's publisher. Basis is read from the claim, from markers like "(P)", "(AE)" or a trailing BE/RE, or from phrases in the quote. Metric keys join a registry that grows per document. Block key = entity, metric, interval. | `entities`, `metrics`, `claim_canon` |
+| Canonicalise | Period strings become date intervals (FY25, 2024-25, FY2024/25, Q3:2024-25, Q3-2024, 3Q-2024, 2025:Q2, 30-Sep-24 and "first quarter of FY2025/26" all resolve; month-first dates such as 12/31/2024 are recognised when the day cannot be a month; an unreadable period leaves the claim non-comparable rather than failing the document). Units become a base unit and scaled value, with stacked scales multiplied (a lakh crore is 10^12), a scale letter after a currency symbol read ($M, $B), and the printed precision kept for tolerance. A unit the model writes as a bare scale ("million") takes the single currency printed on its page when the label names a money measure, and stays a count otherwise. Entities resolve by identifier first, then by normalised name; a generic subject such as "the Company" resolves to the document's publisher. Basis is read from the claim, from markers like "(P)", "(AE)" or a trailing BE/RE, or from phrases in the quote. Metric keys join a registry that grows per document. Block key = entity, metric, interval. | `entities`, `metrics`, `claim_canon` |
 | Reconcile | Every pair inside a block goes through the decision procedure below. When a document is added, only the blocks it touches are recomputed. | `relations` |
 
 ### The decision procedure
@@ -129,17 +129,20 @@ terms:
    difference is noted on the relation rather than blocking it.
 2. If both state a scope and the scopes differ, they are **reconciled by scope**. Standalone
    against consolidated is the textbook case.
-3. If the bases differ and both are ranked (advance estimate < provisional < revised <
+3. If both come from the same publisher and their labels name different rows, they are two
+   line items under one key, **reconciled by label** at low confidence. This runs before the
+   basis rule, so a release that files several series under one key cannot make one series
+   supersede another.
+4. If the bases differ and both are ranked (advance estimate < provisional < revised <
    actual), the more mature basis **supersedes** the other. When one basis is unranked (a
    projection, a budget, a pro forma restatement) and the same publisher printed the later
    figure in a later publication, the later figure **supersedes** as a restatement; otherwise
    the two only reconcile by basis.
-4. If one side states no scope and the other does, they are reconciled by scope at low
+5. If one side states no scope and the other does, they are reconciled by scope at low
    confidence: unstated never contradicts.
-5. If both come from the same publisher: different labels mean two line items under one key,
-   reconciled at low confidence; a later publication date means a restatement, which
+6. If both come from the same publisher, a later publication date means a restatement, which
    supersedes; otherwise a contradiction for review.
-6. Otherwise it is a **contradiction for review**: different publishers, every coordinate
+7. Otherwise it is a **contradiction for review**: different publishers, every coordinate
    matched, values differ. Provenance never blocks a comparison; it only decides which of two
    disagreeing claims is current.
 
@@ -168,7 +171,7 @@ stale: staleness is modelled, not accidental.
 Nothing below is encoded anywhere. The ids are rows the engine produced on the six starter
 PDFs; every link opens the evidence with the quote highlighted on the rendered page.
 
-**Case 1, corroborated across documents.** [`#relation/140`](https://strata-600642773754.asia-south1.run.app/#relation/140).
+**Case 1, corroborated across documents.** [`#relation/145`](https://strata-600642773754.asia-south1.run.app/#relation/145).
 The FY24 annual report, page 36: "Revenue from contracts with customers 81,415.38", in INR
 million, consolidated. The Q4 FY24 earnings deck, page 6: "₹8,142 Cr FY24 revenue from
 services". Different unit systems, different phrasing, different scope wording. In base units
@@ -176,20 +179,20 @@ the two agree within the printed precision of the crore figure, so the engine ca
 fact and notes that the scope wording differed.
 
 **Case 3, an apparent contradiction explained by context.** Two instances.
-By basis, [`#relation/298`](https://strata-600642773754.asia-south1.run.app/#relation/298): the Economic Survey (January 2025,
+By basis, [`#relation/307`](https://strata-600642773754.asia-south1.run.app/#relation/307): the Economic Survey (January 2025,
 page 4) says "As per the first advance estimates of national accounts, India's real GDP is
 estimated to grow by 6.4 per cent in FY25"; the IMF Article IV (November 2025, page 3) says
 "economic growth of 6.5 percent in FY2024/25". Same entity, metric, period and unit, values
 differ, but the Survey labels its figure an advance estimate, so the IMF figure supersedes it
 with the reason attached. The RBI annual report's provisional 6.5 supersedes the same claim
-([`#relation/297`](https://strata-600642773754.asia-south1.run.app/#relation/297)). Ask the Answer view for India's GDP growth
+([`#relation/306`](https://strata-600642773754.asia-south1.run.app/#relation/306)). Ask the Answer view for India's GDP growth
 in FY25 and you get 6.5, with both 6.4 claims kept as history. A retrieval system would
 happily answer 6.4.
-By scope, [`#relation/156`](https://strata-600642773754.asia-south1.run.app/#relation/156): the same annual-report page carries
+By scope, [`#relation/161`](https://strata-600642773754.asia-south1.run.app/#relation/161): the same annual-report page carries
 "Revenue from Operations" as 74,540.82 (standalone) and 81,415.38 (consolidated). Not a
 contradiction; the scope coordinate differs, and that is the explanation shown.
 
-**Case 2, a genuine contradiction.** [`#relation/244`](https://strata-600642773754.asia-south1.run.app/#relation/244). The RBI
+**Case 2, a genuine contradiction.** [`#relation/253`](https://strata-600642773754.asia-south1.run.app/#relation/253). The RBI
 annual report, page 17: "CPI inflation for 2025-26 is projected at 4.0 per cent". The IMF,
 page 13: "Headline inflation is expected to remain benign and average 2.8 percent in
 FY2025/26". Two institutions, same year, same measure, both projections, 4.0 against 2.8.
@@ -197,7 +200,7 @@ Different publishers never supersede each other, so the engine flags the pair fo
 shows both spans. The corpus holds 15 such cross-document contradictions, all for review;
 another is the Survey's first advance estimate of FY25 growth (6.4) against the RBI's second
 advance estimate (6.5), which the engine cannot order because both carry the same basis label
-([`#relation/295`](https://strata-600642773754.asia-south1.run.app/#relation/295)).
+([`#relation/304`](https://strata-600642773754.asia-south1.run.app/#relation/304)).
 
 **Case 4, an extraction failure and how it is handled.** Two shapes.
 [`#claim/301`](https://strata-600642773754.asia-south1.run.app/#claim/301): a chart on deck page 9 whose text layer reads
@@ -213,7 +216,7 @@ quarantined, each with a typed reason.
 A fifth relation worth a look: the 2022 prospectus lists Suvir Suren Sujan as a
 non-executive nominee director and the FY24 annual report records his resignation on
 August 24, 2023. Matched on DIN 01173669, the later state supersedes the earlier one by time
-([`#relation/198`](https://strata-600642773754.asia-south1.run.app/#relation/198)).
+([`#relation/207`](https://strata-600642773754.asia-south1.run.app/#relation/207)).
 
 ### Engineering decisions and trade-offs
 
@@ -251,21 +254,24 @@ the registry consolidation pass, and reading plain-English questions.
 | Limitation | What happens today | Next step |
 |---|---|---|
 | Chart pairings cannot be verified from a text layer that has lost them. | Such claims are accepted at the `tokens` grade and visibly marked; a mis-paired value contradicts the exact figure elsewhere and lands in review. | Render the chart region and ask the model to re-read only it, then re-verify. |
-| Metric keys drift. The model sometimes keys the same measure two ways, and sometimes keys two measures the same way (`cpi_inflation` holds both CPI-Combined and CPI-IW; `headcount` holds workforce and ESOP holders). Uploading a national accounts release showed the sharper form: nominal and real GDP growth under one key, and rice, coal and cement production growth under another, so the engine ordered them by basis as if each were one series. | Registry hints in every prompt reduce it; the consolidation pass merges what it is sure of; the registry view shows the rest with counts and aliases; the Answer view still picks the right current figure because a wrong-series claim rarely wins on basis and corroboration together. | Ask the model to put a commodity, sector or price basis into `scope`, then the scope coordinate separates them; and a manual merge and split in the UI, recorded in the same alias table. |
+| Metric keys drift. The model sometimes keys the same measure two ways, and sometimes keys two measures the same way (`cpi_inflation` holds both CPI-Combined and CPI-IW; `headcount` holds workforce and ESOP holders). Uploading a national accounts release showed the sharper form: nominal and real GDP growth under one key, and rice, coal and cement production growth under another, so the engine ordered them by basis as if each were one series. | Registry hints in every prompt reduce it; the consolidation pass merges what it is sure of; the registry view shows the rest with counts and aliases. The same-publisher label check runs before the basis rule, so two rows of one release are two line items at low confidence rather than a supersession: on a US GDP release that filed 23 measures under `gdp_growth`, 176 confident supersessions became 24. The Answer view can still pick the wrong series: asked for US real GDP growth in Q2 2025 it returns real final sales (1.9) over real GDP (3.3), because a coincidental agreement between two unrelated 1.9 rows counts as corroboration. | Ask the model to put a commodity, sector or price basis into `scope`, then the scope coordinate separates them; a manual merge and split in the UI, recorded in the same alias table. Ranking tweaks alone do not help: each one tried flipped a cached demo answer. |
 | Attribution is not extracted. The Economic Survey quotes the IMF's FY26 inflation projection; the claim carries the Survey as publisher, so its pair against the IMF's own later figure reads as a cross-publisher contradiction when it is the IMF revising itself. | Stated. The pair is still shown for review with both spans. | An `asserted_by` field on the claim, distinct from the document's publisher. |
 | Publication dates come from the model reading the cover pages. The RBI report came back without one. | Its supersession rests on basis alone; the Documents view says "date not found". PDF metadata carries the right month for all six files, but it is a guess about provenance and is not used. | Offer the metadata date as a suggestion the user confirms. |
-| The fiscal year is assumed to end in March, and period phrasing is parsed in English. | "Year ended December 31, 2024" is read correctly, but a bare "fiscal 2024" becomes April 2023 to March 2024, and "31 décembre 2024" is left non-comparable, so such documents miss comparisons rather than inventing them. | A per-document convention read from the first slice; month names in other languages. |
+| The fiscal year is assumed to end in March, and period phrasing is parsed in English. | "Year ended December 31, 2024", "Q3-2024", "3Q-2024", "2025:Q2" and "30-Sep-24" are read correctly (before the last three were added, a Tesla deck had 0 of 57 claims comparable), but a bare "fiscal 2024" becomes April 2023 to March 2024, so a question about Apple's fiscal 2024 misses its October to September block, and "31 décembre 2024" is left non-comparable. Such documents miss comparisons rather than inventing them. | A per-document convention read from the first slice; month names in other languages. |
 | State facts use one small rule. | Appointment to resignation works, matched on DIN. Chains with more than two steps, or role changes without a date, are out of scope. | Model roles as intervals with start and end. |
 | Scanned PDFs have no text layer, and some text pages carry their tables as images. | Every claim on a scanned page is quarantined as `no_text_layer`; a claim read from an image table on a text page is quarantined as `quote_not_found` (13 of 82 claims on a MoSPI press note). Nothing is invented. | OCR the page image before verification. |
 | Thinking models are not deterministic at temperature 0. | The same deck gave 78 and then 62 claims on the same prompt in two runs. The committed cache is what makes the corpus reproducible. | Nothing to fix; stated so the numbers are read correctly. |
 | Two domains were tested in depth. | A 30-page arXiv paper from outside both domains extracted cleanly (40 claims, 30 exact, 1 quarantined) and produced no relations, because 38 of its claims carry no period or unit and nothing in the layer measures the same thing. That is the honest generalisation result: the layer does not invent comparisons it cannot ground. | More conventions in the period and unit parsers as new document types arrive. |
+| Rates with different annualisation conventions share a block. | BEA's annualised 3.0 per cent for US Q2 2025 and the Bank of England's quarter-on-quarter 0.7 for the same quarter were flagged as a contradiction for review: an apparent contradiction the engine has no coordinate for. | An annualisation coordinate read from "annual rate", "annualised" or "q/q" wording, applied like scope. |
+| Unit wording from the model decides comparability. | Apple's FY25 statement came back with "million" and no currency while the FY24 statement said "USD million"; the bare scale became a count and the two statements shared no relation. A bare scale on a money-like label now takes the page's single currency (the two statements share eleven relations); on a count-like label, or on a page with two currencies, it stays a count. A figure the model leaves with no unit at all (Tesla's vehicle deliveries) remains non-comparable. | Carry a table header's unit onto every figure of the table, and treat a unit-less integer under a count-like key as a count. |
+| A question without a period cannot reach a numeric fact. | Numeric block keys always carry a date interval, so "What is the Bank of England's Bank Rate?" is read correctly and finds nothing although the claim is in the layer. | Fall back to the latest period for that entity and metric. |
 | Free-tier quota. | On an AI Studio key a 100-page upload is two of the day's twenty requests; the UI says when the quota is gone and accepts a caller's own key. The hosted demo runs on Vertex AI and has no daily cap. | Nothing to fix. |
 
 ## Additional Notes
 
 **Numbers.** Six documents, 511 pages, two domains. 956 claims extracted, 930 grounded (861
 exact, 10 nearby, 59 tokens), 26 quarantined. 224 metric keys with 2 aliases, 112 entities,
-464 relations. Across documents: 46 corroborate, 38 reconcile, 12 supersede, 15 contradict.
+473 relations. Across documents: 46 corroborate, 38 reconcile, 12 supersede, 15 contradict.
 
 **Cost and time.** The corpus took 11 extraction requests in one pass (989 s, mostly model
 time) plus one consolidation request, about ₹100 of Vertex AI credit. Everything after that
@@ -311,6 +317,24 @@ document atomically before extracting, so two instances cannot process one docum
 made two simultaneous uploads of the same bytes resolve to one row instead of a constraint
 error, tolerated a page whose text layer cannot be read, accepted page numbers the model
 writes as strings, and capped question length.
+
+A third pass, run the way a grader would, pushed eight documents from outside both domains through a
+sandbox copy of the layer: Apple's FY24 and FY25 statements, two BEA GDP releases, two Tesla decks, the
+UN World Population Prospects summary at 18.5 MB and 100 pages of the Bank of England's Monetary
+Policy Report. 291 pages, ten requests, under ten minutes, 599 of 611 claims re-found exactly. BEA's
+second estimate superseded its advance estimate with the right reason, and the Economic Survey's
+projection of US growth was corroborated by BEA's and the Bank of England's outturns. What broke: the
+Apple FY25 statement said "million" without a currency, so it shared no relation with the FY24
+statement although it restates every FY24 figure; Tesla's Q3-2024, 3Q-2024 and 30-Sep-24 periods did
+not parse, so its Q3 deck had no comparable claim; "$M" lost its scale; and the BEA release filed 23
+measures under `gdp_growth`, which the basis rule turned into 176 confident supersessions. Fixed:
+those period forms, the currency-letter scale, the page-currency rule for bare units on money-like
+labels, and the label rule running before the basis rule. On the starter corpus the fix removed the
+two within-document supersessions, both of which had been wrong (CPI-IW over CPI-Combined,
+electronics exports over total exports), and added nine within-document relations for prospectus
+figures whose unit was a bare "million" on a rupee page; nothing across documents changed. Not fixed
+and stated above: series drift inside a block and the Answer ranking it misleads, annualised against
+quarter-on-quarter rates, period-less questions, and unit-less counts.
 
 **What would need to be true to trust this outside these two domains.** The period parser
 would need the target's fiscal conventions; the unit parser would need its currencies and
