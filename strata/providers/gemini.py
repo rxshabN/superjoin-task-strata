@@ -43,7 +43,7 @@ class GeminiProvider:
             types.Part.from_text(text=prompt),
         ]
         result = None
-        for attempt in range(3):
+        for attempt in range(5):
             self._wait()
             self._last = time.monotonic()
             try:
@@ -51,7 +51,7 @@ class GeminiProvider:
                 break
             except errors.APIError as e:
                 code = getattr(e, "code", None)
-                if code == 429 and attempt < 2:
+                if code in (429, 503) and attempt < 4:
                     time.sleep(20 * (attempt + 1))
                     continue
                 if code == 400 and self._thinking and "thinking" in str(e).lower():
