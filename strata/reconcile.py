@@ -97,12 +97,11 @@ def relate(a: dict, b: dict) -> dict | None:
         return _relation("reconciled", a, b, "basis", f"{a['basis_canon']} vs {b['basis_canon']}")
     if one_unstated:
         return _relation("reconciled", a, b, "scope", "scope unstated on one side; values differ", confidence="low")
-    va, vb = _vintage(a), _vintage(b)
-    different_labels = labels_differ(a, b)
-    label_note = f"labels differ: {a.get('label')} vs {b.get('label')}"
     if _same_publisher(a, b):
-        if different_labels:
-            return _relation("reconciled", a, b, "label", f"same publisher, two line items; {label_note}", "low")
+        if labels_differ(a, b):
+            note = f"labels differ: {a.get('label')} vs {b.get('label')}"
+            return _relation("reconciled", a, b, "label", f"same publisher, two line items; {note}", "low")
+        va, vb = _vintage(a), _vintage(b)
         if va and vb and va != vb:
             new, old = (a, b) if va > vb else (b, a)
             return _relation(
@@ -113,10 +112,6 @@ def relate(a: dict, b: dict) -> dict | None:
                 "contradicts", a, b, None, "publication date unknown, so supersession cannot be decided", "review"
             )
         return _relation("contradicts", a, b, None, "same publisher, same label, same date, different values", "review")
-    if different_labels:
-        return _relation(
-            "contradicts", a, b, None, f"every coordinate matches and the values differ; {label_note}", "low"
-        )
     return _relation("contradicts", a, b, None, "every coordinate matches and the values differ", "review")
 
 

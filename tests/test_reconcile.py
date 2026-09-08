@@ -61,7 +61,8 @@ def test_different_publishers_with_different_labels_still_contradict():
             2, 4.4, unit="pct", publisher="Ministry of Finance", published_at="2025-01", label="Gross fiscal deficit"
         ),
     )
-    assert rel["kind"] == "contradicts" and rel["confidence"] == "low" and "labels differ" in rel["explanation"]
+    assert rel["kind"] == "contradicts" and rel["confidence"] == "review"
+    assert rel["explanation"] == "every coordinate matches and the values differ"
 
 
 def test_close_uses_printed_precision():
@@ -288,4 +289,5 @@ def test_different_publishers_never_wait_for_a_date():
         claim(1, 4.0, unit="pct", publisher="Reserve Bank of India", published_at=None, label="CPI inflation"),
         claim(2, 2.8, unit="pct", publisher="IMF", published_at="2025-11", label="Headline inflation"),
     )
-    assert rel["kind"] == "contradicts" and rel["confidence"] == "low" and "labels differ" in rel["explanation"]
+    assert rel["kind"] == "contradicts" and rel["confidence"] == "review"
+    assert rel["explanation"] == "every coordinate matches and the values differ"
