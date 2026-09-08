@@ -2,7 +2,7 @@ import json
 
 from strata import db
 from strata.canon import canonicalise_document
-from strata.reconcile import blocks_for_document, close, reconcile, relate
+from strata.reconcile import blocks_for_document, close, label_tokens, reconcile, relate
 
 
 def claim(
@@ -15,6 +15,7 @@ def claim(
     published_at="2024-01-01",
     text=None,
     period_end=None,
+    label=None,
 ):
     return {
         "id": id,
@@ -26,7 +27,41 @@ def claim(
         "publisher": publisher,
         "published_at": published_at,
         "period_end": period_end,
+        "label": label,
     }
+
+
+def test_label_tokens_ignore_periods_and_noise():
+    assert label_tokens("FY24 EBITDA") == label_tokens("EBITDA")
+    assert label_tokens("Total Revenue") == label_tokens("Revenue")
+    assert label_tokens("Revenue for the year ended March 31, 2024") == label_tokens("Revenue")
+    assert label_tokens("Adjusted EBITDA") != label_tokens("EBITDA")
+    assert label_tokens("Revenue from Operations") != label_tokens("Revenue from services")
+    assert label_tokens(None) == frozenset()
+
+
+def test_same_publisher_different_labels_are_line_items():
+    total = claim(1, 81415.38e6, publisher="Delhivery", published_at="2024-07", label="Revenue from Operations")
+    segment = claim(
+        2, 6087.96e6, publisher="Delhivery", published_at="2024-07", label="Revenues from truckload services"
+    )
+    rel = relate(total, segment)
+    assert rel["kind"] == "reconciled" and rel["dimension"] == "label" and rel["confidence"] == "low"
+    ebitda = claim(3, 127e7, publisher="Delhivery", published_at="2024-05-17", label="FY24 EBITDA")
+    adjusted = claim(4, 76e7, publisher="Delhivery", published_at="2024-05-17", label="Adjusted EBITDA")
+    assert relate(ebitda, adjusted)["kind"] == "reconciled"
+    same_label = claim(5, 130e7, publisher="Delhivery", published_at="2024-05-17", label="EBITDA")
+    assert relate(ebitda, same_label)["kind"] == "contradicts"
+
+
+def test_different_publishers_with_different_labels_still_contradict():
+    rel = relate(
+        claim(1, 4.8, unit="pct", publisher="IMF", published_at="2025-11", label="Fiscal deficit"),
+        claim(
+            2, 4.4, unit="pct", publisher="Ministry of Finance", published_at="2025-01", label="Gross fiscal deficit"
+        ),
+    )
+    assert rel["kind"] == "contradicts" and rel["confidence"] == "low" and "labels differ" in rel["explanation"]
 
 
 def test_close_uses_printed_precision():

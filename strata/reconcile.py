@@ -1,10 +1,41 @@
+import re
 from itertools import combinations
 
 from . import db
-from .canon import entity_key, published_key
+from .canon import MONTHS, entity_key, published_key
 
 RANK = {"advance_estimate": 1, "provisional": 2, "revised": 3, "actual": 4}
 FALLBACK_RELATIVE = 0.005
+LABEL_NOISE = {
+    "the",
+    "of",
+    "from",
+    "for",
+    "in",
+    "and",
+    "to",
+    "a",
+    "an",
+    "as",
+    "at",
+    "on",
+    "by",
+    "with",
+    "total",
+    "year",
+    "ended",
+}
+LABEL_PERIOD = re.compile(r"^(fy\d*|q[1-4]|h[12]|cy\d*|\d{2}|\d{4})$")
+
+
+def label_tokens(label) -> frozenset[str]:
+    words = re.sub(r"[^\w\s]", " ", str(label or "").lower()).split()
+    return frozenset(w for w in words if w not in LABEL_NOISE and w not in MONTHS and not LABEL_PERIOD.match(w))
+
+
+def labels_differ(a, b) -> bool:
+    ta, tb = label_tokens(a.get("label")), label_tokens(b.get("label"))
+    return bool(ta) and bool(tb) and ta != tb
 
 
 def close(a: float, b: float, precision: float | None = None) -> bool:
@@ -67,14 +98,28 @@ def relate(a: dict, b: dict) -> dict | None:
     if one_unstated:
         return _relation("reconciled", a, b, "scope", "scope unstated on one side; values differ", confidence="low")
     va, vb = _vintage(a), _vintage(b)
-    if _same_publisher(a, b) and va and vb and va != vb:
-        new, old = (a, b) if va > vb else (b, a)
-        return _relation(
-            "supersedes", new, old, "vintage", f"restated by {new['publisher']} on {va if new is a else vb}"
-        )
+    different_labels = labels_differ(a, b)
+    label_note = f"labels differ: {a.get('label')} vs {b.get('label')}"
+    if _same_publisher(a, b):
+        if different_labels:
+            return _relation("reconciled", a, b, "label", f"same publisher, two line items; {label_note}", "low")
+        if va and vb and va != vb:
+            new, old = (a, b) if va > vb else (b, a)
+            return _relation(
+                "supersedes", new, old, "vintage", f"restated by {new['publisher']} on {va if new is a else vb}"
+            )
+        if not (va and vb):
+            return _relation(
+                "contradicts", a, b, None, "publication date unknown, so supersession cannot be decided", "review"
+            )
+        return _relation("contradicts", a, b, None, "same publisher, same label, same date, different values", "review")
     if not (va and vb):
         return _relation(
             "contradicts", a, b, None, "publication date unknown, so supersession cannot be decided", "review"
+        )
+    if different_labels:
+        return _relation(
+            "contradicts", a, b, None, f"every coordinate matches and the values differ; {label_note}", "low"
         )
     return _relation("contradicts", a, b, None, "every coordinate matches and the values differ", "review")
 
@@ -103,8 +148,8 @@ def relate_text(a: dict, b: dict) -> dict | None:
 
 
 CLAIM_SQL = """
-select c.id, c.doc_id, cc.block_key, cc.unit_canon, cc.value_canon, cc.value_text, cc.basis_canon, cc.scope_canon,
-       cc.period_start, cc.period_end, cc.precision, d.publisher, d.published_at
+select c.id, c.doc_id, c.label, cc.block_key, cc.unit_canon, cc.value_canon, cc.value_text, cc.basis_canon,
+       cc.scope_canon, cc.period_start, cc.period_end, cc.precision, d.publisher, d.published_at
 from claim_canon cc
 join claims c on c.id = cc.claim_id
 join documents d on d.id = c.doc_id
