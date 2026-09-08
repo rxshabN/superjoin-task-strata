@@ -77,7 +77,7 @@ def reconcile_all(conn, ids: list[int]):
     print("\ncanonicalising")
     for doc_id in ids:
         doc = db.one(conn, "select filename, status from documents where id = ?", (doc_id,))
-        if doc["status"] != "extracted":
+        if doc["status"] not in ("extracted", "ready"):
             continue
         stats = canonicalise_document(conn, doc_id)
         cells = " ".join(f"{k}={v}" for k, v in stats.items())

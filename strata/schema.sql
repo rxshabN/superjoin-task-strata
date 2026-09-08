@@ -10,6 +10,7 @@ create table if not exists documents (
     status text not null default 'queued',
     malformed_lines integer not null default 0,
     model text,
+    error text,
     ingested_at text
 );
 

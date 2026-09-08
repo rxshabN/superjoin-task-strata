@@ -32,7 +32,11 @@ def connect(cfg: config.Settings | None = None, path: Path | None = None):
 
 def init(conn):
     conn.executescript(SCHEMA)
-    for table, column, kind in (("claim_canon", "precision", "real"), ("documents", "model", "text")):
+    for table, column, kind in (
+        ("claim_canon", "precision", "real"),
+        ("documents", "model", "text"),
+        ("documents", "error", "text"),
+    ):
         columns = {r["name"] for r in rows(conn, f"pragma table_info({table})")}
         if column not in columns:
             conn.execute(f"alter table {table} add column {column} {kind}")

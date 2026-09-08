@@ -5,13 +5,36 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Strata</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      .chip { font-family: ui-monospace, monospace; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; padding: 2px 7px; border-radius: 3px; white-space: nowrap; }
+      .chip-ok { background: #e3efe8; color: #2f6b4f; }
+      .chip-rec { background: #e9ecf6; color: #33417a; }
+      .chip-past { background: #eceef2; color: #5b6272; }
+      .chip-bad { background: #f6e7e5; color: #a6362f; }
+      .chip-warn { background: #f5eedd; color: #8a6a1f; }
+      .mono { font-family: ui-monospace, monospace; }
+      .quote { border-left: 3px solid #d9dde5; padding-left: 10px; color: #454b59; }
+      a.nav.active { color: #33417a; border-bottom: 2px solid #33417a; }
+    </style>
   </head>
   <body class="bg-slate-50 text-slate-900">
-    <main class="mx-auto max-w-3xl px-6 py-16">
-      <h1 class="text-4xl font-semibold tracking-tight">Strata</h1>
-      <p class="mt-2 text-slate-600">A fact knowledge layer over PDFs. Scaffold only: the pipeline arrives in later phases.</p>
-      <pre id="health" class="mt-8 rounded border border-slate-200 bg-white p-4 text-sm text-slate-700">checking /health…</pre>
-    </main>
+    <header class="border-b border-slate-200 bg-white">
+      <div class="mx-auto max-w-7xl px-6 py-4 flex items-baseline gap-8">
+        <h1 class="text-2xl font-semibold tracking-tight">Strata</h1>
+        <nav class="flex gap-6 text-sm text-slate-600">
+          <a class="nav pb-1" href="#documents">Documents</a>
+          <a class="nav pb-1" href="#facts">Facts</a>
+          <a class="nav pb-1" href="#relations">Relations</a>
+          <a class="nav pb-1" href="#quarantine">Quarantine</a>
+          <a class="nav pb-1" href="#answer">Answer</a>
+        </nav>
+        <span id="health" class="ml-auto mono text-xs text-slate-500"></span>
+      </div>
+    </header>
+    <main id="view" class="mx-auto max-w-7xl px-6 py-8"></main>
+    <div id="modal" class="fixed inset-0 z-20 hidden bg-slate-900/50 p-6 overflow-y-auto" onclick="if (event.target === this) closeModal()">
+      <div id="modal-body" class="mx-auto max-w-6xl rounded bg-white p-6 shadow-xl"></div>
+    </div>
     <script src="app.js"></script>
   </body>
 </html>
