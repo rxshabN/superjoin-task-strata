@@ -1,5 +1,7 @@
 const view = document.getElementById("view");
-const state = { documents: [], metrics: [], entities: [], poll: null };
+const state = { documents: [], metrics: [], entities: [], poll: null, factOffset: 0, relationOffset: 0 };
+const PAGE = 300;
+const BUSY = ["queued", "ingested", "extracting", "verifying", "reconciling"];
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
@@ -53,10 +55,62 @@ async function loadBasics() {
   state.entities = entities.entities;
 }
 
+function pager(shown, total, offset, fn) {
+  if (total <= PAGE) return `<div class="mb-2 text-xs text-slate-500">${shown} shown</div>`;
+  const to = offset + shown;
+  const btn = (label, delta, off) => `<button class="text-indigo-700 underline disabled:opacity-40" ${off ? "disabled" : ""} onclick="${fn}(${delta})">${label}</button>`;
+  return `<div class="mb-2 flex items-center gap-3 text-xs text-slate-500"><span>${offset + 1}–${to} of ${total}</span>${btn("previous", -1, offset === 0)}${btn("next", 1, to >= total)}</div>`;
+}
+
 async function documentsView() {
+  view.innerHTML = `
+    <section class="grid gap-6 md:grid-cols-3">
+      <form id="upload" class="rounded border border-slate-200 bg-white p-4 md:col-span-1">
+        <h2 class="font-semibold">Add a PDF</h2>
+        <p class="mt-1 text-sm text-slate-600">Pages are read by the model, every quote is re-found on its page, then claims are compared with everything already in the layer.</p>
+        <input class="mt-3 block w-full text-sm" type="file" name="file" accept="application/pdf" required />
+        <input class="mt-2 block w-full rounded border border-slate-300 px-2 py-1 text-sm" name="key" placeholder="Optional: your own Gemini API key, used for this upload only" />
+        <button class="mt-3 rounded bg-indigo-800 px-3 py-1.5 text-sm text-white">Upload and process</button>
+        <div id="upload-msg" class="mt-2 text-sm text-slate-600"></div>
+      </form>
+      <div id="relation-counts" class="rounded border border-slate-200 bg-white p-4 md:col-span-2"></div>
+    </section>
+    <section class="mt-8 overflow-x-auto rounded border border-slate-200 bg-white p-4">
+      <table class="w-full min-w-[900px]">
+        <thead class="text-left text-xs uppercase tracking-wide text-slate-500"><tr>
+          <th class="pb-2 pr-3">Document</th><th class="pb-2 pr-3">Publisher</th><th class="pb-2 pr-3">Pages</th><th class="pb-2 pr-3">Status</th>
+          <th class="pb-2 pr-3">Claims</th><th class="pb-2 pr-3">Exact</th><th class="pb-2 pr-3">Weak</th><th class="pb-2 pr-3">Quarantined</th><th class="pb-2 pr-3" title="metric keys this document introduced to the registry">New keys</th><th class="pb-2">Model</th>
+        </tr></thead>
+        <tbody id="doc-rows"></tbody>
+      </table>
+    </section>`;
+  document.getElementById("upload").onsubmit = async (e) => {
+    e.preventDefault();
+    const form = e.target;
+    const msg = document.getElementById("upload-msg");
+    const body = new FormData();
+    body.append("file", form.file.files[0]);
+    const headers = form.key.value ? { "X-Gemini-Key": form.key.value } : {};
+    msg.textContent = "Uploading…";
+    try {
+      const r = await api("/documents", { method: "POST", body, headers });
+      msg.textContent = r.new ? `Queued ${r.page_count} pages as document ${r.id}.` : r.status === "queued" ? `Already in the layer as document ${r.id}; processing it again.` : `Already in the layer as document ${r.id} (${r.status}).`;
+      form.file.value = "";
+      refreshDocuments();
+    } catch (err) {
+      msg.textContent = err.message;
+    }
+  };
+  await refreshDocuments();
+}
+
+async function refreshDocuments() {
+  clearTimeout(state.poll);
   const data = await api("/documents");
   state.documents = data.documents;
-  const busy = data.documents.some((d) => ["queued", "ingested", "extracting", "verifying", "reconciling"].includes(d.status));
+  const rowsEl = document.getElementById("doc-rows");
+  if (!rowsEl) return;
+  const busy = data.documents.some((d) => BUSY.includes(d.status));
   const rows = data.documents.map((d) => `
     <tr class="border-t border-slate-100">
       <td class="py-2 pr-3 text-sm">${esc(d.filename)}<div class="text-xs text-slate-500">${esc(d.title || "")}</div></td>
@@ -70,53 +124,15 @@ async function documentsView() {
       <td class="py-2 pr-3 text-sm mono">${d.new_metrics}</td>
       <td class="py-2 text-xs mono text-slate-500">${esc(d.model || "")}</td>
     </tr>`).join("");
+  rowsEl.innerHTML = rows || '<tr><td class="py-4 text-sm text-slate-500" colspan="10">No documents yet.</td></tr>';
   const rc = data.relations;
   const counts = (obj) => Object.entries(obj).map(([k, n]) => `${kindChip(k)} <span class="mono text-sm">${n}</span>`).join(" &nbsp; ");
-  view.innerHTML = `
-    <section class="grid gap-6 md:grid-cols-3">
-      <form id="upload" class="rounded border border-slate-200 bg-white p-4 md:col-span-1">
-        <h2 class="font-semibold">Add a PDF</h2>
-        <p class="mt-1 text-sm text-slate-600">Pages are read by the model, every quote is re-found on its page, then claims are compared with everything already in the layer.</p>
-        <input class="mt-3 block w-full text-sm" type="file" name="file" accept="application/pdf" required />
-        <input class="mt-2 block w-full rounded border border-slate-300 px-2 py-1 text-sm" name="key" placeholder="Optional: your own Gemini API key, used for this upload only" />
-        <button class="mt-3 rounded bg-indigo-800 px-3 py-1.5 text-sm text-white">Upload and process</button>
-        <div id="upload-msg" class="mt-2 text-sm text-slate-600"></div>
-      </form>
-      <div class="rounded border border-slate-200 bg-white p-4 md:col-span-2">
-        <h2 class="font-semibold">Relations across documents</h2>
-        <div class="mt-2">${counts(rc.cross || {}) || '<span class="text-sm text-slate-500">none yet</span>'}</div>
-        <h3 class="mt-3 text-sm font-semibold text-slate-600">Within a single document</h3>
-        <div class="mt-1">${counts(rc.within || {}) || '<span class="text-sm text-slate-500">none yet</span>'}</div>
-      </div>
-    </section>
-    <section class="mt-8 overflow-x-auto rounded border border-slate-200 bg-white p-4">
-      <table class="w-full min-w-[900px]">
-        <thead class="text-left text-xs uppercase tracking-wide text-slate-500"><tr>
-          <th class="pb-2 pr-3">Document</th><th class="pb-2 pr-3">Publisher</th><th class="pb-2 pr-3">Pages</th><th class="pb-2 pr-3">Status</th>
-          <th class="pb-2 pr-3">Claims</th><th class="pb-2 pr-3">Exact</th><th class="pb-2 pr-3">Weak</th><th class="pb-2 pr-3">Quarantined</th><th class="pb-2 pr-3" title="metric keys this document introduced to the registry">New keys</th><th class="pb-2">Model</th>
-        </tr></thead>
-        <tbody>${rows || '<tr><td class="py-4 text-sm text-slate-500" colspan="10">No documents yet.</td></tr>'}</tbody>
-      </table>
-    </section>`;
-  document.getElementById("upload").onsubmit = async (e) => {
-    e.preventDefault();
-    const form = e.target;
-    const msg = document.getElementById("upload-msg");
-    const body = new FormData();
-    body.append("file", form.file.files[0]);
-    const headers = form.key.value ? { "X-Gemini-Key": form.key.value } : {};
-    msg.textContent = "Uploading…";
-    try {
-      const r = await api("/documents", { method: "POST", body, headers });
-      msg.textContent = r.new ? `Queued ${r.page_count} pages as document ${r.id}.` : `Already in the layer as document ${r.id} (${r.status}).`;
-      form.reset();
-      documentsView();
-    } catch (err) {
-      msg.textContent = err.message;
-    }
-  };
-  clearInterval(state.poll);
-  if (busy) state.poll = setInterval(() => { if (location.hash === "#documents" || location.hash === "") documentsView(); else clearInterval(state.poll); }, 2500);
+  document.getElementById("relation-counts").innerHTML = `
+    <h2 class="font-semibold">Relations across documents</h2>
+    <div class="mt-2">${counts(rc.cross || {}) || '<span class="text-sm text-slate-500">none yet</span>'}</div>
+    <h3 class="mt-3 text-sm font-semibold text-slate-600">Within a single document</h3>
+    <div class="mt-1">${counts(rc.within || {}) || '<span class="text-sm text-slate-500">none yet</span>'}</div>`;
+  if (busy) state.poll = setTimeout(() => { if (location.hash === "#documents" || location.hash === "") refreshDocuments(); }, 2500);
 }
 
 async function factsView() {
@@ -150,15 +166,29 @@ async function factsView() {
     e.preventDefault();
     const f = new FormData(e.target);
     state.factFilters = Object.fromEntries([...f.entries()].filter(([, v]) => v));
+    state.factOffset = 0;
     renderFacts();
   };
   renderFacts();
 }
 
+function pageFacts(delta) {
+  state.factOffset = Math.max(0, (state.factOffset || 0) + delta * PAGE);
+  renderFacts();
+}
+
+function pageRelations(delta) {
+  state.relationOffset = Math.max(0, (state.relationOffset || 0) + delta * PAGE);
+  renderRelations();
+}
+
 async function renderFacts() {
   const params = new URLSearchParams(state.factFilters || {});
-  params.set("limit", "300");
+  params.set("limit", String(PAGE));
+  params.set("offset", String(state.factOffset || 0));
   const data = await api(`/claims?${params}`);
+  const box = document.getElementById("facts");
+  if (!box) return;
   const rows = data.claims.map((c) => `
     <tr class="border-t border-slate-100 cursor-pointer hover:bg-slate-50" onclick="showClaim(${c.id})">
       <td class="py-1.5 pr-3 text-xs mono text-slate-500">${shortDoc(c.filename)} p${c.located_page || c.page_no}</td>
@@ -168,15 +198,16 @@ async function renderFacts() {
       <td class="py-1.5 pr-3 text-sm">${value(c)}</td>
       <td class="py-1.5">${gradeChip(c)}</td>
     </tr>`).join("");
-  document.getElementById("facts").innerHTML = `
+  box.innerHTML = `
     <div class="overflow-x-auto rounded border border-slate-200 bg-white p-3">
-      <div class="mb-2 text-xs text-slate-500">${data.claims.length} claims shown</div>
+      ${pager(data.claims.length, data.total, data.offset, "pageFacts")}
       <table class="w-full min-w-[800px]"><tbody>${rows || '<tr><td class="py-3 text-sm text-slate-500">Nothing matches.</td></tr>'}</tbody></table>
     </div>`;
 }
 
 function setMetric(key) {
   state.factFilters = { ...(state.factFilters || {}), metric: key };
+  state.factOffset = 0;
   factsView();
 }
 
@@ -198,6 +229,7 @@ async function relationsView() {
     const f = new FormData(e.target);
     state.relationFilters = Object.fromEntries([...f.entries()].filter(([, v]) => v));
     if (!state.relationFilters.cross) state.relationFilters.cross = "false";
+    state.relationOffset = 0;
     renderRelations();
   };
   renderRelations();
@@ -215,9 +247,12 @@ function relationRow(r) {
 
 async function renderRelations() {
   const params = new URLSearchParams(state.relationFilters || { cross: "true" });
-  params.set("limit", "300");
+  params.set("limit", String(PAGE));
+  params.set("offset", String(state.relationOffset || 0));
   const data = await api(`/relations?${params}`);
-  document.getElementById("relations").innerHTML = `<div class="text-xs text-slate-500">${data.relations.length} relations shown</div>` + (data.relations.map(relationRow).join("") || '<div class="text-sm text-slate-500">Nothing matches.</div>');
+  const box = document.getElementById("relations");
+  if (!box) return;
+  box.innerHTML = pager(data.relations.length, data.total, data.offset, "pageRelations") + (data.relations.map(relationRow).join("") || '<div class="text-sm text-slate-500">Nothing matches.</div>');
 }
 
 async function quarantineView() {
@@ -354,13 +389,13 @@ async function route() {
   const [name, open] = DETAIL[head] || [head || "documents", null];
   if (query) {
     const params = Object.fromEntries(new URLSearchParams(query).entries());
-    if (name === "facts") state.factFilters = params;
-    if (name === "relations") state.relationFilters = { cross: "true", ...params };
+    if (name === "facts") { state.factFilters = params; state.factOffset = 0; }
+    if (name === "relations") { state.relationFilters = { cross: "true", ...params }; state.relationOffset = 0; }
     if (name === "answer") state.answerQuery = params;
   }
   setNav(name);
   closeModal();
-  clearInterval(state.poll);
+  clearTimeout(state.poll);
   view.innerHTML = '<div class="text-sm text-slate-500">Loading…</div>';
   try {
     await (VIEWS[name] || documentsView)();

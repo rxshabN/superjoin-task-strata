@@ -72,10 +72,11 @@ def claims(conn, doc_id=None, entity=None, metric=None, grade=None, status=None,
     if q:
         where.append("(c.label like ? or c.quote like ? or c.subject like ?)")
         params += [f"%{q}%"] * 3
-    sql = CLAIM_SELECT + (" where " + " and ".join(where) if where else "") + " order by c.doc_id, c.page_no, c.id"
-    sql += " limit ? offset ?"
+    sql = CLAIM_SELECT + (" where " + " and ".join(where) if where else "")
+    total = db.one(conn, f"select count(*) as n from ({sql})", tuple(params))["n"]
+    sql += " order by c.doc_id, c.page_no, c.id limit ? offset ?"
     params += [limit, offset]
-    return [_shape(r) for r in db.rows(conn, sql, tuple(params))]
+    return [_shape(r) for r in db.rows(conn, sql, tuple(params))], total
 
 
 def claim(conn, claim_id: int) -> dict | None:
@@ -111,14 +112,16 @@ def relations(conn, kind=None, cross_only=True, confidence=None, doc_id=None, me
         " from relations r join claims a on a.id = r.a_id join claims b on b.id = r.b_id"
         " join claim_canon cc on cc.claim_id = r.a_id"
     )
-    sql += (" where " + " and ".join(where) if where else "") + " order by r.kind, cc.metric_key, r.id limit ? offset ?"
+    sql += " where " + " and ".join(where) if where else ""
+    total = db.one(conn, f"select count(*) as n from ({sql})", tuple(params))["n"]
+    sql += " order by r.kind, cc.metric_key, r.id limit ? offset ?"
     params += [limit, offset]
     rows = db.rows(conn, sql, tuple(params))
     lookup = claims_by_ids(conn, sorted({i for r in rows for i in (r["a_id"], r["b_id"])}))
     for r in rows:
         r["a"] = lookup.get(r["a_id"])
         r["b"] = lookup.get(r["b_id"])
-    return rows
+    return rows, total
 
 
 def relation(conn, relation_id: int) -> dict | None:
