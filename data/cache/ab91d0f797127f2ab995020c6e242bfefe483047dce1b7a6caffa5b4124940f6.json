@@ -1,0 +1,7 @@
+{
+ "text": "{\"entity\":\"india\",\"metric\":\"cpi_inflation\",\"period\":\"FY26\"}",
+ "finish_reason": "STOP",
+ "input_tokens": 2754,
+ "output_tokens": 18,
+ "model": "gemini-3.8-flash"
+}

@@ -1,0 +1,7 @@
+{
+ "text": "```json\n{\"entity\":\"india\",\"metric\":\"gdp_growth\",\"period\":\"FY25\"}\n```",
+ "finish_reason": "STOP",
+ "input_tokens": 2753,
+ "output_tokens": 23,
+ "model": "gemini-3.8-flash"
+}

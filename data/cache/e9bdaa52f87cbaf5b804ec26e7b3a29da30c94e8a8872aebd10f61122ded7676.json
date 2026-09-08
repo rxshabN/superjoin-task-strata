@@ -1,0 +1,7 @@
+{
+ "text": "```json\n{\"entity\":\"delhivery\",\"metric\":\"active_customers\",\"period\":\"Q4 FY24\"}\n```",
+ "finish_reason": "STOP",
+ "input_tokens": 2756,
+ "output_tokens": 26,
+ "model": "gemini-3.8-flash"
+}
