@@ -23,7 +23,7 @@ TABLES = {
 def test_settings_defaults():
     s = config.load({})
     assert s.provider == "gemini"
-    assert s.gemini_model == "gemini-3.8-flash"
+    assert s.gemini_model == "gemini-3.7-flash"
     assert s.pages_per_request == 50
     assert s.claims_per_page == 8
     assert s.db == "sqlite"

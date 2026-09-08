@@ -43,7 +43,7 @@ def load(env=None) -> Settings:
     return Settings(
         provider=get("STRATA_PROVIDER", "gemini"),
         gemini_api_key=get("GEMINI_API_KEY") or None,
-        gemini_model=get("GEMINI_MODEL", "gemini-3.8-flash"),
+        gemini_model=get("GEMINI_MODEL", "gemini-3.7-flash"),
         ollama_url=get("OLLAMA_URL", "http://localhost:11434"),
         ollama_model=get("OLLAMA_MODEL", "llama3.2-vision"),
         pages_per_request=int(get("STRATA_PAGES_PER_REQUEST", "50")),
