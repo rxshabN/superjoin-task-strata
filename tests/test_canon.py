@@ -61,6 +61,41 @@ def test_basis_marker():
     assert basis_marker("FY24") is None
 
 
+def test_basis_phrase_from_quote():
+    from strata.canon import basis_phrase, canonicalise_claim
+
+    assert (
+        basis_phrase("As per the first advance estimates, real GDP is estimated to grow by 6.4 per cent")
+        == "advance_estimate"
+    )
+    assert basis_phrase("real GDP growth for 2025-26 is projected at 6.5 per cent") == "projection"
+    assert basis_phrase("growth moderated to 6.5 per cent in 2024-25") is None
+    stated = {
+        "id": 1,
+        "doc_id": 1,
+        "subject": "India",
+        "metric_raw": "gdp_growth",
+        "value_raw": "6.4",
+        "unit_raw": "per cent",
+        "period_raw": "FY25",
+        "basis_raw": "actual",
+        "quote": "As per the first advance estimates, 6.4 per cent",
+        "keys_json": "{}",
+    }
+    conn = db.init(db.connect(path=tmp_path_for_basis()))
+    make_doc(conn, "s.pdf", "MoF", "2025-01")
+    assert canonicalise_claim(conn, stated)["basis_canon"] == "advance_estimate"
+    stated["basis_raw"] = "provisional"
+    assert canonicalise_claim(conn, stated)["basis_canon"] == "provisional"
+
+
+def tmp_path_for_basis():
+    import tempfile
+    from pathlib import Path
+
+    return Path(tempfile.mkdtemp()) / "b.db"
+
+
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [

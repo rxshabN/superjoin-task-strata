@@ -149,6 +149,27 @@ def basis_marker(raw) -> str | None:
     return None
 
 
+BASIS_PHRASES = (
+    ("advance estimate", "advance_estimate"),
+    ("provisional", "provisional"),
+    ("revised estimate", "revised"),
+    ("budget estimate", "budget"),
+    ("projected", "projection"),
+    ("projection", "projection"),
+    ("forecast", "projection"),
+    ("pro forma", "pro_forma"),
+    ("pro-forma", "pro_forma"),
+)
+
+
+def basis_phrase(*texts) -> str | None:
+    blob = squash(" ".join(str(t) for t in texts if t))
+    for phrase, basis in BASIS_PHRASES:
+        if phrase in blob:
+            return basis
+    return None
+
+
 def parse_period(raw) -> tuple[str, str] | None:
     s = squash(raw)
     s = re.sub(r"\(([a-z]{1,4})\)", "", s).strip()
@@ -368,7 +389,9 @@ def canonicalise_claim(conn, claim: dict) -> dict:
     period = parse_period(claim.get("period_raw"))
     unit = parse_unit(claim.get("unit_raw"))
     number = parse_value(claim.get("value_raw"))
-    basis = basis_marker(claim.get("period_raw")) or claim.get("basis_raw") or "actual"
+    basis = claim.get("basis_raw") or "actual"
+    if basis == "actual":
+        basis = basis_marker(claim.get("period_raw")) or basis_phrase(claim.get("quote"), claim.get("label")) or basis
     scope = squash(claim.get("scope_raw"))
     scope = None if scope in ("", "null", "none") else scope
     row = {
