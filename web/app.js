@@ -316,12 +316,26 @@ function closeModal() {
 
 const VIEWS = { documents: documentsView, facts: factsView, relations: relationsView, quarantine: quarantineView, answer: answerView };
 
+const DETAIL = { relation: ["relations", showRelation], claim: ["facts", showClaim] };
+
 async function route() {
-  const name = location.hash.replace("#", "") || "documents";
+  const [path, query] = location.hash.replace("#", "").split("?");
+  const [head, id] = path.split("/");
+  const [name, open] = DETAIL[head] || [head || "documents", null];
+  if (query) {
+    const params = Object.fromEntries(new URLSearchParams(query).entries());
+    if (name === "facts") state.factFilters = params;
+    if (name === "relations") state.relationFilters = { cross: "true", ...params };
+    if (name === "answer") state.answerQuery = params;
+  }
   setNav(name);
+  closeModal();
   clearInterval(state.poll);
   view.innerHTML = '<div class="text-sm text-slate-500">Loading…</div>';
-  try { await (VIEWS[name] || documentsView)(); } catch (err) { view.innerHTML = `<div class="text-sm text-red-700">${esc(err.message)}</div>`; }
+  try {
+    await (VIEWS[name] || documentsView)();
+    if (open && id) await open(Number(id));
+  } catch (err) { view.innerHTML = `<div class="text-sm text-red-700">${esc(err.message)}</div>`; }
 }
 
 api("/health").then((h) => { document.getElementById("health").textContent = `${h.model} · ${h.db}`; }).catch(() => {});
