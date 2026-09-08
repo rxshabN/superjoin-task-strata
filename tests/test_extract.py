@@ -2,6 +2,7 @@ import dataclasses
 import json
 
 import pymupdf
+import pytest
 
 from strata import config, db
 from strata.cache import Cache
@@ -156,6 +157,34 @@ def test_extract_document_resumes_after_truncation(tmp_path):
     }
     metrics = {r["key"]: r["claim_count"] for r in db.rows(conn, "select key, claim_count from metrics")}
     assert metrics == {"revenue": 1, "net_profit": 1, "headcount": 1, "cost": 1, "assets": 1}
+
+
+def test_reextract_replaces_claims_and_ignores_registry_drift(tmp_path):
+    cfg = dataclasses.replace(config.load({}), pages_per_request=1)
+    conn = db.init(db.connect(path=tmp_path / "t.db"))
+    pdf = make_pdf([" ".join(["text"] * 50), " ".join(["more"] * 50)])
+    doc = ingest_bytes(conn, pdf, "two.pdf")
+    cache = Cache(tmp_path / "cache", enabled=True)
+    partial = ScriptedProvider([(claim(1, "revenue", 1, "revenue 1"), "STOP")])
+    with pytest.raises(IndexError):
+        extract_document(conn, doc["id"], partial, cache, cfg)
+    assert db.one(conn, "select count(*) as n from claims")["n"] == 1
+    other = ingest_bytes(conn, make_pdf(["other document"]), "other.pdf")
+    conn.execute(
+        "insert into claims (doc_id, page_no, metric_raw, quote, status)"
+        " values (?, 1, 'unrelated_key', 'q', 'verified')",
+        (other["id"],),
+    )
+    conn.execute("insert into metrics (key, claim_count) values ('unrelated_key', 1)")
+    conn.commit()
+    resumed = ScriptedProvider([(claim(2, "cost", 2, "cost 2"), "STOP")])
+    stats = extract_document(conn, doc["id"], resumed, cache, cfg)
+    assert stats["requests"] == 2 and stats["cached"] == 1
+    rows = db.rows(conn, "select page_no, metric_raw from claims where doc_id = ? order by id", (doc["id"],))
+    assert rows == [{"page_no": 1, "metric_raw": "revenue"}, {"page_no": 2, "metric_raw": "cost"}]
+    assert "Metric registry so far: revenue, unrelated_key" in resumed.prompts[0]
+    counts = {r["key"]: r["claim_count"] for r in db.rows(conn, "select key, claim_count from metrics")}
+    assert counts == {"unrelated_key": 1, "revenue": 1, "cost": 1}
 
 
 def test_extract_document_replays_from_cache(tmp_path):

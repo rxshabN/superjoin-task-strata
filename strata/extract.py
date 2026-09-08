@@ -200,6 +200,28 @@ def insert_claims(conn, doc_id: int, claims: list[dict]) -> int:
     return len(rows)
 
 
+def cache_key(cache: Cache, provider, prompt: str, sha256: str, first: int, last: int) -> str:
+    stem = prompt.rsplit("\nMetric registry so far:", 1)[0]
+    return cache.key(provider.name, provider.model, stem, sha256, f"{first}-{last}")
+
+
+def clear_document(conn, doc_id: int):
+    conn.execute(
+        "delete from relations where a_id in (select id from claims where doc_id = ?)"
+        " or b_id in (select id from claims where doc_id = ?)",
+        (doc_id, doc_id),
+    )
+    for table in ("claim_canon", "evidence", "quarantine"):
+        conn.execute(f"delete from {table} where claim_id in (select id from claims where doc_id = ?)", (doc_id,))
+    conn.execute("delete from claims where doc_id = ?", (doc_id,))
+    conn.execute("delete from metrics")
+    conn.execute(
+        "insert into metrics (key, label, first_seen_doc, claim_count)"
+        " select metric_raw, min(label), min(doc_id), count(*) from claims group by metric_raw"
+    )
+    conn.execute("update documents set malformed_lines = 0 where id = ?", (doc_id,))
+
+
 def registry(conn) -> list[str]:
     return [
         r["key"]
@@ -224,6 +246,7 @@ def extract_document(conn, doc_id: int, provider=None, cache: Cache | None = Non
     pages = {p["page_no"]: p for p in ingest.pages(conn, doc_id)}
     stats = {"requests": 0, "cached": 0, "claims": 0, "malformed": 0, "resumes": 0, "finish": [], "tokens_out": 0}
     started = time.perf_counter()
+    clear_document(conn, doc_id)
     conn.execute("update documents set status = 'extracting', model = ? where id = ?", (provider.model, doc_id))
     db.commit(conn)
     status = "extracted"
@@ -235,7 +258,7 @@ def extract_document(conn, doc_id: int, provider=None, cache: Cache | None = Non
             prompt = build_prompt(
                 doc["filename"], doc["page_count"], start, last, window, registry(conn), cfg.claims_per_page
             )
-            key = cache.key(provider.name, provider.model, prompt, doc["sha256"], f"{start}-{last}")
+            key = cache_key(cache, provider, prompt, doc["sha256"], start, last)
             try:
                 response = providers.generate(slice_pdf(doc["pdf"], start, last), prompt, provider, cache, key)
             except Exception as e:

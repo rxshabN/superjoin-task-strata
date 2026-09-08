@@ -8,7 +8,7 @@ from .. import config
 from .base import Response
 
 log = logging.getLogger("strata.gemini")
-RETRY_WAITS = {429: (20, 40), 503: (45,)}
+RETRY_WAITS = {429: (20, 40), 503: ()}
 
 
 class GeminiProvider:
@@ -23,18 +23,9 @@ class GeminiProvider:
         self.model = model or cfg.gemini_model
         self.spacing_s = cfg.request_spacing_s if spacing_s is None else spacing_s
         self._last = 0.0
-        self._thinking = True
 
     def _config(self) -> types.GenerateContentConfig:
-        thinking = None
-        if self._thinking:
-            thinking = types.ThinkingConfig(thinking_level=types.ThinkingLevel.MINIMAL)
-        return types.GenerateContentConfig(
-            temperature=0,
-            seed=7,
-            max_output_tokens=65536,
-            thinking_config=thinking,
-        )
+        return types.GenerateContentConfig(temperature=0, seed=7, max_output_tokens=65536)
 
     def _wait(self):
         gap = self.spacing_s - (time.monotonic() - self._last)
@@ -60,10 +51,6 @@ class GeminiProvider:
                     retries[code] += 1
                     log.warning("gemini %s, retry %d after %ds", code, retries[code], wait)
                     time.sleep(wait)
-                    continue
-                if code == 400 and self._thinking and "thinking" in str(e).lower():
-                    log.warning("gemini rejected thinking_level for %s; retrying with default thinking", self.model)
-                    self._thinking = False
                     continue
                 raise
         candidate = result.candidates[0] if result.candidates else None
