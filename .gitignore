@@ -23,7 +23,3 @@ data/*.db-journal
 data/*.db-wal
 data/*.db-shm
 data/_*
-
-superjoin-vit-2026-assignment.pdf
-
-.claude/

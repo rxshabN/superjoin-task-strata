@@ -1,5 +1,4 @@
 .git
-.claude
 .venv
 .env
 .env.local
@@ -12,4 +11,3 @@ data/replica.db*
 data/*.db-journal
 data/*.db-wal
 data/*.db-shm
-superjoin-vit-2026-assignment.pdf
