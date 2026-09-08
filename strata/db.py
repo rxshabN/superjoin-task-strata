@@ -56,7 +56,7 @@ def commit(conn):
 
 def rows(conn, sql: str, params=()) -> list[dict]:
     cur = conn.execute(sql, params)
-    names = [d[0] for d in cur.description] if cur.description else []
+    names = [d[0].lower() for d in cur.description] if cur.description else []
     return [dict(zip(names, r, strict=False)) for r in cur.fetchall()]
 
 
