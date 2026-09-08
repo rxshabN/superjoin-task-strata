@@ -58,6 +58,21 @@ def test_build_prompt_mentions_pages_hints_and_registry():
     assert '"type":"document"' in first and first.endswith("(empty)")
 
 
+def test_cache_key_ignores_advisory_lines(tmp_path):
+    from strata.extract import cache_key
+
+    cache = Cache(tmp_path, enabled=True)
+    hints = {"units": [], "scopes": [], "periods": [], "text_layer": True}
+    pages = [{"page_no": 1, "skipped": 0, "hints": hints}, {"page_no": 2, "skipped": 1, "hints": hints}]
+    provider = ScriptedProvider([])
+    with_skip = build_prompt("a.pdf", 2, 1, 2, pages, ["revenue"], 8)
+    without_skip = build_prompt("a.pdf", 2, 1, 2, [dict(p, skipped=0) for p in pages], ["cost", "revenue"], 8)
+    assert "Pages with almost no text" in with_skip and "Pages with almost no text" not in without_skip
+    assert cache_key(cache, provider, with_skip, "sha", 1, 2) == cache_key(cache, provider, without_skip, "sha", 1, 2)
+    other = build_prompt("a.pdf", 2, 1, 2, pages, ["revenue"], 4)
+    assert cache_key(cache, provider, other, "sha", 1, 2) != cache_key(cache, provider, with_skip, "sha", 1, 2)
+
+
 def test_parse_handles_noise():
     text = "\n".join(
         [
@@ -74,6 +89,21 @@ def test_parse_handles_noise():
     assert document["title"] == "T"
     assert [c["page"] for c in claims] == [3]
     assert malformed == 3
+
+
+def test_insert_claims_keeps_only_dict_keys(tmp_path):
+    from strata.extract import insert_claims
+
+    conn = db.init(db.connect(path=tmp_path / "k.db"))
+    doc = ingest_bytes(conn, make_pdf(["text " * 50]), "k.pdf")
+    base = {"type": "claim", "page": 1, "subject": "A", "metric": "m", "value": 1, "quote": "q"}
+    insert_claims(
+        conn,
+        doc["id"],
+        [{**base, "keys": "DIN 123"}, {**base, "keys": ["x"]}, {**base, "keys": None}, {**base, "keys": {"din": "1"}}],
+    )
+    rows = [r["keys_json"] for r in db.rows(conn, "select keys_json from claims order by id")]
+    assert rows == ["{}", "{}", "{}", '{"din": "1"}']
 
 
 def test_parse_accepts_array():
@@ -204,6 +234,20 @@ def test_reextract_keeps_metrics_referenced_by_other_documents(tmp_path):
     assert stats["cached"] == 1
     assert db.one(conn, "select claim_count as n from metrics where key = 'revenue'")["n"] == 2
     assert db.one(conn, "select count(*) as n from claims")["n"] == 2
+
+
+def test_extract_document_explains_an_empty_result(tmp_path):
+    cfg = dataclasses.replace(config.load({}), pages_per_request=50)
+    conn = db.init(db.connect(path=tmp_path / "t.db"))
+    doc = ingest_bytes(conn, make_pdf([" ".join(["text"] * 50)]), "empty.pdf")
+    cache = Cache(tmp_path / "cache", enabled=True)
+    stats = extract_document(conn, doc["id"], ScriptedProvider([("", "SAFETY")]), cache, cfg)
+    assert stats["status"] == "extracted" and stats["claims"] == 0
+    row = db.one(conn, "select status, error from documents")
+    assert row["status"] == "extracted" and "no claims" in row["error"] and "SAFETY" in row["error"]
+    good = ScriptedProvider([(claim(1, "revenue", 1, "revenue 1"), "STOP")])
+    extract_document(conn, doc["id"], good, Cache(tmp_path / "cache2", enabled=True), cfg)
+    assert db.one(conn, "select error from documents")["error"] is None
 
 
 def test_extract_document_replays_from_cache(tmp_path):

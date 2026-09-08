@@ -9,6 +9,7 @@ from .base import Response
 
 log = logging.getLogger("strata.gemini")
 RETRY_WAITS = {429: (20, 40), 503: ()}
+TIMEOUT_MS = 600_000
 
 
 class GeminiProvider:
@@ -23,18 +24,29 @@ class GeminiProvider:
     ):
         cfg = config.settings
         self.backend = backend or cfg.gemini_backend
-        if self.backend == "vertex":
-            if not cfg.gcp_project:
-                raise RuntimeError("GEMINI_BACKEND=vertex needs GOOGLE_CLOUD_PROJECT")
-            self.client = genai.Client(vertexai=True, project=cfg.gcp_project, location=cfg.gcp_location)
-        else:
-            key = api_key or cfg.gemini_api_key
-            if not key:
-                raise RuntimeError("GEMINI_API_KEY is not set")
-            self.client = genai.Client(api_key=key)
+        self.api_key = api_key or cfg.gemini_api_key
+        self.project = cfg.gcp_project
+        self.location = cfg.gcp_location
         self.model = model or cfg.gemini_model
         self.spacing_s = cfg.request_spacing_s if spacing_s is None else spacing_s
+        self._client = None
         self._last = 0.0
+
+    @property
+    def client(self) -> genai.Client:
+        if self._client is None:
+            options = types.HttpOptions(timeout=TIMEOUT_MS)
+            if self.backend == "vertex":
+                if not self.project:
+                    raise RuntimeError("GEMINI_BACKEND=vertex needs GOOGLE_CLOUD_PROJECT")
+                self._client = genai.Client(
+                    vertexai=True, project=self.project, location=self.location, http_options=options
+                )
+            else:
+                if not self.api_key:
+                    raise RuntimeError("GEMINI_API_KEY is not set")
+                self._client = genai.Client(api_key=self.api_key, http_options=options)
+        return self._client
 
     def _config(self) -> types.GenerateContentConfig:
         return types.GenerateContentConfig(temperature=0, seed=7, max_output_tokens=65536)

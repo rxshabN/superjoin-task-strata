@@ -94,6 +94,16 @@ def relate(a: dict, b: dict) -> dict | None:
             return _relation(
                 "supersedes", new, old, "basis", f"basis matured: {old['basis_canon']} → {new['basis_canon']}"
             )
+        va, vb = _vintage(a), _vintage(b)
+        if _same_publisher(a, b) and va and vb and va != vb:
+            new, old = (a, b) if va > vb else (b, a)
+            return _relation(
+                "supersedes",
+                new,
+                old,
+                "vintage",
+                f"restated by {new['publisher']} on {_vintage(new)}: {old['basis_canon']} → {new['basis_canon']}",
+            )
         return _relation("reconciled", a, b, "basis", f"{a['basis_canon']} vs {b['basis_canon']}")
     if one_unstated:
         return _relation("reconciled", a, b, "scope", "scope unstated on one side; values differ", confidence="low")

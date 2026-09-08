@@ -23,7 +23,7 @@ TABLES = {
 def test_settings_defaults():
     s = config.load({})
     assert s.provider == "gemini"
-    assert s.gemini_model == "gemini-3.7-flash"
+    assert s.gemini_model == "gemini-3.8-flash"
     assert s.pages_per_request == 50
     assert s.claims_per_page == 8
     assert s.db == "sqlite"
@@ -44,8 +44,20 @@ def test_vertex_backend_requires_project(monkeypatch):
     monkeypatch.setattr(
         config, "settings", dataclasses.replace(config.settings, gemini_backend="vertex", gcp_project=None)
     )
+    provider = get_provider("gemini")
+    assert provider.model == config.settings.gemini_model
     with pytest.raises(RuntimeError):
-        get_provider("gemini")
+        _ = provider.client
+
+
+def test_gemini_provider_needs_a_key_only_for_a_live_request(monkeypatch):
+    monkeypatch.setattr(
+        config, "settings", dataclasses.replace(config.settings, gemini_backend="aistudio", gemini_api_key=None)
+    )
+    provider = get_provider("gemini")
+    assert provider.name == "gemini"
+    with pytest.raises(RuntimeError, match="GEMINI_API_KEY"):
+        provider.generate_text("hello")
 
 
 def test_schema_applies(tmp_path):

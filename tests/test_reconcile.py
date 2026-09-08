@@ -126,6 +126,19 @@ def test_projection_reconciles_not_supersedes():
     assert rel["kind"] == "reconciled" and rel["dimension"] == "basis"
 
 
+def test_same_publisher_restates_a_comparative_later():
+    original = claim(1, 1100e6, unit="USD", publisher="Acme", published_at="2024-03-10")
+    restated = claim(2, 1080e6, unit="USD", basis="pro_forma", publisher="Acme Ltd", published_at="2025-03-12")
+    rel = relate(original, restated)
+    assert rel["kind"] == "supersedes" and rel["a_id"] == 2 and rel["dimension"] == "vintage"
+    assert rel["explanation"].startswith("restated by Acme Ltd on 2025-03-12")
+    outlook = claim(3, 6.5, unit="pct", basis="projection", publisher="RBI", published_at="2025-05")
+    outturn = claim(4, 6.8, unit="pct", publisher="RBI", published_at="2026-05")
+    assert relate(outlook, outturn)["kind"] == "supersedes" and relate(outlook, outturn)["a_id"] == 4
+    other = claim(5, 6.8, unit="pct", publisher="IMF", published_at="2026-05")
+    assert relate(outlook, other)["kind"] == "reconciled"
+
+
 def test_independent_sources_agree():
     rel = relate(
         claim(1, 6.5, unit="pct", publisher="RBI", published_at="2025-05"),

@@ -50,3 +50,25 @@ def test_ask_endpoint_answers_and_replays(client, monkeypatch):
     miss = client.post("/ask", json={"question": "How tall is the Eiffel tower?"}).json()
     assert miss["found"] is False and miss["coordinates"] is None
     assert client.post("/ask", json={"question": "   "}).status_code == 400
+
+
+def test_cached_question_needs_no_key(client, monkeypatch):
+    import dataclasses
+
+    from strata import config
+    from strata.cache import Cache
+    from strata.providers.base import Response
+
+    settings = dataclasses.replace(config.settings, gemini_backend="aistudio", gemini_api_key=None)
+    monkeypatch.setattr(config, "settings", settings)
+    question = "What was India's GDP growth in FY25?"
+    entities = [(e["name_canon"], e["claims"]) for e in client.get("/entities").json()["entities"] if e["claims"]]
+    metrics = [(m["key"], m["claim_count"]) for m in client.get("/metrics").json()["metrics"]]
+    prompt = ask.build_prompt(question, entities, metrics)
+    cache = Cache()
+    record = Response('{"entity":"india","metric":"gdp_growth","period":"FY25"}', "STOP", model=settings.gemini_model)
+    cache.put(cache.key("gemini", settings.gemini_model, prompt), record.to_record())
+    data = client.post("/ask", json={"question": question}).json()
+    assert data["found"] and data["cached"] is True and data["current"]["value_raw"] == "6.5"
+    live = client.post("/ask", json={"question": "Something not cached?"})
+    assert live.status_code == 503 and "GEMINI_API_KEY" in live.json()["detail"]

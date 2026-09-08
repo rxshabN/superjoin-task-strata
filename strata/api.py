@@ -63,14 +63,19 @@ async def upload_document(
 ):
     cfg = config.settings
     data = await file.read()
-    if not data.startswith(b"%PDF"):
+    if b"%PDF" not in data[:1024]:
         raise HTTPException(400, "The file is not a PDF.")
     if len(data) > cfg.max_upload_mb * 1024 * 1024:
         raise HTTPException(413, f"The file is larger than {cfg.max_upload_mb} MB.")
     try:
-        page_count = len(pymupdf.open(stream=data, filetype="pdf"))
+        pdf = pymupdf.open(stream=data, filetype="pdf")
     except Exception as error:
         raise HTTPException(400, "The PDF could not be opened.") from error
+    if pdf.needs_pass:
+        raise HTTPException(400, "The PDF is password-protected.")
+    page_count = len(pdf)
+    if page_count == 0:
+        raise HTTPException(400, "The PDF has no pages.")
     if page_count > cfg.max_upload_pages:
         raise HTTPException(413, f"The PDF has {page_count} pages; the limit is {cfg.max_upload_pages}.")
     with connection() as conn:
@@ -104,7 +109,8 @@ def list_claims(
     offset: int = Query(0, ge=0),
 ):
     with connection() as conn:
-        return {"claims": queries.claims(conn, doc, entity, metric, grade, status, q, limit, offset)}
+        found, total = queries.claims(conn, doc, entity, metric, grade, status, q, limit, offset)
+    return {"claims": found, "total": total, "limit": limit, "offset": offset}
 
 
 @app.get("/claims/{claim_id}")
@@ -127,7 +133,8 @@ def list_relations(
     offset: int = Query(0, ge=0),
 ):
     with connection() as conn:
-        return {"relations": queries.relations(conn, kind, cross, confidence, doc, metric, limit, offset)}
+        found, total = queries.relations(conn, kind, cross, confidence, doc, metric, limit, offset)
+    return {"relations": found, "total": total, "limit": limit, "offset": offset}
 
 
 @app.get("/relations/{relation_id}")

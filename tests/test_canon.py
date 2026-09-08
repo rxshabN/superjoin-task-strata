@@ -60,7 +60,41 @@ from strata.canon import (
         ("end-FY2024/25", ("2025-03-31", "2025-03-31")),
         ("as at end-March 2025", ("2025-03-31", "2025-03-31")),
         ("end of September 2024", ("2024-09-30", "2024-09-30")),
+        ("yearend 2024", ("2024-12-31", "2024-12-31")),
+        ("year-end FY24", ("2024-03-31", "2024-03-31")),
+        ("at year end 2023", ("2023-12-31", "2023-12-31")),
         ("FY25*", ("2024-04-01", "2025-03-31")),
+        ("12/31/2024", ("2024-12-31", "2024-12-31")),
+        ("Mar-25", ("2025-03-01", "2025-03-31")),
+        ("Dec-24", ("2024-12-01", "2024-12-31")),
+        ("Q3:2024-25", ("2024-10-01", "2024-12-31")),
+        ("Q1:2025-26", ("2025-04-01", "2025-06-30")),
+        ("2024-25 BE", ("2024-04-01", "2025-03-31")),
+        ("2024-25 RE", ("2024-04-01", "2025-03-31")),
+        ("FY25E", ("2024-04-01", "2025-03-31")),
+        ("CY24", ("2024-01-01", "2024-12-31")),
+        ("Apr-Dec 24", ("2024-04-01", "2024-12-31")),
+        ("first quarter of FY2025/26", ("2025-04-01", "2025-06-30")),
+        ("third quarter of 2024-25", ("2024-10-01", "2024-12-31")),
+        ("April-June 2025/26", ("2025-04-01", "2025-06-30")),
+        ("October-December 2024-25", ("2024-10-01", "2024-12-31")),
+        ("9M FY25", ("2024-04-01", "2024-12-31")),
+        ("9MFY25", ("2024-04-01", "2024-12-31")),
+        ("1QFY26", ("2025-04-01", "2025-06-30")),
+        ("1HFY25", ("2024-04-01", "2024-09-30")),
+        ("2022 and 2023", None),
+        ("2011-2020", ("2011-01-01", "2020-12-31")),
+        ("1850 to 2019", ("1850-01-01", "2019-12-31")),
+        ("2006–2018", ("2006-01-01", "2018-12-31")),
+        ("2024-2023", None),
+        ("FY25 up to November", None),
+        ("as of 12/31/2024", ("2024-12-31", "2024-12-31")),
+        ("year ended 12/31/2024", ("2024-01-01", "2024-12-31")),
+        ("31/12/2024", ("2024-12-31", "2024-12-31")),
+        ("2024-13-01", None),
+        ("February 30, 2024", None),
+        ("31.04.2024", None),
+        ("Q1 0000", None),
         ("date of this Prospectus", None),
         ("since inception", None),
         ("", None),
@@ -76,7 +110,11 @@ def test_basis_marker():
     assert basis_marker("2024-25 (P)") == "provisional"
     assert basis_marker("2025-26 (BE)") == "budget"
     assert basis_marker("2024-25 (FAE)") == "advance_estimate"
+    assert basis_marker("2024-25 BE") == "budget"
+    assert basis_marker("2024-25 RE") == "revised"
+    assert basis_marker("FY25E") == "projection"
     assert basis_marker("FY24") is None
+    assert basis_marker("March 2024") is None
 
 
 def test_basis_phrase_from_quote():
@@ -133,6 +171,14 @@ def tmp_path_for_basis():
         ("count", ("count", 1.0)),
         ("million", ("count", 1e6)),
         ("thousand tons", ("tons", 1e3)),
+        ("lakh crore", ("count", 1e12)),
+        ("INR lakh crore", ("INR", 1e12)),
+        ("Rs. lakh crore", ("INR", 1e12)),
+        ("thousand crore", ("count", 1e10)),
+        ("millions d'euros", ("EUR", 1e6)),
+        ("million euros", ("EUR", 1e6)),
+        ("billion dollars", ("USD", 1e9)),
+        ("salariés", ("salariés", 1.0)),
         ("million sq ft", ("sq ft", 1e6)),
         ("days", ("days", 1.0)),
         ("x", ("x", 1.0)),
@@ -155,6 +201,10 @@ def test_parse_unit(raw, expected):
         ("12.68%", 12.68),
         ("Rs. 578", 578.0),
         ("–", None),
+        ("−48.12", -48.12),
+        ("–1,008", -1008.0),
+        ("nan", None),
+        ("inf", None),
         ("resigned", None),
         (None, None),
     ],
@@ -325,6 +375,23 @@ def test_resolve_metric_does_not_merge_distinct_measures(tmp_path):
     assert resolve_metric(conn, "cash_from_financing_activities", None, doc) == "cash_from_financing_activities"
     assert resolve_metric(conn, "revenues", None, doc) == "revenue"
     assert resolve_metric(conn, "cash_from_operating_activity", None, doc) == "cash_from_operating_activities"
+
+
+def test_generic_subjects_resolve_to_the_publisher(tmp_path):
+    from strata.canon import subject_name
+
+    assert subject_name("the Company", "Delhivery Limited") == "Delhivery Limited"
+    assert subject_name("The Bank", "Reserve Bank of India") == "Reserve Bank of India"
+    assert subject_name("Company", None) == "unknown"
+    assert subject_name("Delhivery Limited", "Delhivery Limited") == "Delhivery Limited"
+    assert subject_name("Suvir Suren Sujan", "Delhivery Limited") == "Suvir Suren Sujan"
+    assert subject_name(None, "Acme") == "Acme"
+    conn = db.init(db.connect(path=tmp_path / "g.db"))
+    doc = make_doc(conn, "g.pdf", "Acme Limited", "2024")
+    generic = {"subject": "the Company", "metric": "revenue", "value": "1", "unit": "INR crore", "period": "FY24"}
+    seed(conn, doc, [generic])
+    canonicalise_document(conn, doc)
+    assert db.one(conn, "select name_canon from entities")["name_canon"] == "acme"
 
 
 def test_precision_of():

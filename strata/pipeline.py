@@ -5,12 +5,15 @@ from . import canon, db, extract, providers, reconcile, verify
 
 log = logging.getLogger("strata.pipeline")
 LOCK = threading.Lock()
-PENDING = ("ingested", "extracting", "partial", "quota_exhausted", "failed")
+PENDING = ("ingested", "extracting", "verifying", "reconciling", "partial", "quota_exhausted", "failed")
 DONE = ("extracted", "ready")
 
 
 def _status(conn, doc_id: int, status: str, error: str | None = None):
-    conn.execute("update documents set status = ?, error = ? where id = ?", (status, error, doc_id))
+    if error is None:
+        conn.execute("update documents set status = ? where id = ?", (status, doc_id))
+    else:
+        conn.execute("update documents set status = ?, error = ? where id = ?", (status, error, doc_id))
     db.commit(conn)
 
 

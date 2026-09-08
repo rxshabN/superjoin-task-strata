@@ -1,5 +1,6 @@
 import calendar
 import json
+import math
 import re
 from datetime import date, timedelta
 
@@ -23,10 +24,17 @@ CURRENCIES = {
     "us$": "USD",
     "$": "USD",
     "us dollars": "USD",
+    "dollar": "USD",
+    "dollars": "USD",
     "eur": "EUR",
     "€": "EUR",
+    "euro": "EUR",
+    "euros": "EUR",
+    "d'euros": "EUR",
     "gbp": "GBP",
     "£": "GBP",
+    "pound": "GBP",
+    "pounds": "GBP",
 }
 
 SCALES = {
@@ -84,6 +92,23 @@ BASIS_MARKERS = {
 }
 
 HONORIFICS = {"mr", "mrs", "ms", "dr", "shri", "smt", "prof", "sh", "sri", "mx"}
+GENERIC_SUBJECTS = {
+    "",
+    "the",
+    "we",
+    "our",
+    "company",
+    "the company",
+    "group",
+    "the group",
+    "bank",
+    "the bank",
+    "the firm",
+    "issuer",
+    "the issuer",
+    "corporation",
+    "the corporation",
+}
 SUFFIXES = {"limited", "ltd", "inc", "llc", "plc", "pvt", "private", "corporation", "corp", "co", "company", "group"}
 
 
@@ -112,20 +137,30 @@ def _fy_end_year(first: str, second: str | None) -> int:
     return _year(first)
 
 
+def _date(year: int, month: int, day: int) -> date | None:
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return None
+
+
 def _parse_date(text: str) -> date | None:
     s = squash(text).replace(",", "")
     m = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", s)
     if m:
-        return date(int(m[1]), int(m[2]), int(m[3]))
+        return _date(int(m[1]), int(m[2]), int(m[3]))
     m = re.fullmatch(r"(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})", s)
     if m:
-        return date(int(m[3]), int(m[2]), int(m[1]))
+        day, month = int(m[1]), int(m[2])
+        if month > 12 >= day:
+            day, month = month, day
+        return _date(int(m[3]), month, day)
     m = re.fullmatch(r"([a-z]+)\.? (\d{1,2})(?:st|nd|rd|th)? (\d{4})", s)
     if m and m[1] in MONTHS:
-        return date(int(m[3]), MONTHS[m[1]], int(m[2]))
+        return _date(int(m[3]), MONTHS[m[1]], int(m[2]))
     m = re.fullmatch(r"(\d{1,2})(?:st|nd|rd|th)? ([a-z]+)\.? (\d{4})", s)
     if m and m[2] in MONTHS:
-        return date(int(m[3]), MONTHS[m[2]], int(m[1]))
+        return _date(int(m[3]), MONTHS[m[2]], int(m[1]))
     return None
 
 
@@ -143,9 +178,13 @@ def _months_before(end: date, months: int) -> date:
 
 
 def basis_marker(raw) -> str | None:
-    for m in re.finditer(r"\(([a-z]{1,4})\)", squash(raw)):
+    s = squash(raw)
+    for m in re.finditer(r"\(([a-z]{1,4})\)", s):
         if m[1] in BASIS_MARKERS:
             return BASIS_MARKERS[m[1]]
+    m = re.search(r"(?<=\d)\s?([a-z]{1,4})$", s)
+    if m and m[1] in BASIS_MARKERS:
+        return BASIS_MARKERS[m[1]]
     return None
 
 
@@ -169,6 +208,8 @@ def basis_phrase(*texts) -> str | None:
             return basis
     return None
 
+
+QUARTER_WORDS = {"first": 1, "second": 2, "third": 3, "fourth": 4}
 
 NUMBER_WORDS = {
     "one": 1,
@@ -198,11 +239,19 @@ def parse_period(raw) -> tuple[str, str] | None:
     s = re.sub(r"[*†#]+$", "", s).strip()
     if not s or s in ("null", "none"):
         return None
-    span = _parse_span(s)
-    if span is None:
-        s = re.sub(r"\([^)]*\)", "", s).strip()
-        s = re.sub(r"^(q[1-4]|h[12]) of ", r"\1 ", s)
-        span = _parse_span(s) if s else None
+    try:
+        span = _parse_span(s)
+        if span is None:
+            s = re.sub(r"\([^)]*\)", "", s).strip()
+            s = re.sub(r"^(q[1-4]|h[12]) of ", r"\1 ", s)
+            s = re.sub(r"^(q[1-4])\s*:\s*", r"\1 ", s)
+            s = re.sub(r"^([1-4])q", r"q\1", s)
+            s = re.sub(r"^([12])h", r"h\1", s)
+            s = re.sub(r"^(first|second|third|fourth) quarter of ", lambda m: f"q{QUARTER_WORDS[m[1]]} ", s)
+            s = re.sub(r"(?<=\d)\s?(be|re|ae|fae|sae|pe|p|e|f)$", "", s).strip()
+            span = _parse_span(s) if s else None
+    except ValueError:
+        return None
     if span is None:
         return None
     start, end = span
@@ -228,7 +277,7 @@ def _point(span: tuple[date, date] | None) -> tuple[date, date] | None:
 
 def _parse_span(s: str) -> tuple[date, date] | None:
     fy_tail = r"(?:fy|fiscal(?: year)?|financial year)?\s*'?(\d{2}|\d{4})(?:\s*[-/]\s*'?(\d{2}|\d{4}))?"
-    m = re.fullmatch(r"(?:as at |as on )?end[- ](?:of[- ])?(.+)", s)
+    m = re.fullmatch(r"(?:as at |as on |at )?(?:end[- ](?:of[- ])?|year[- ]?end (?:of )?)(.+)", s)
     if m:
         return _point(_parse_span(m[1]))
     m = re.fullmatch(
@@ -253,12 +302,22 @@ def _parse_span(s: str) -> tuple[date, date] | None:
         end = _parse_date(m[2])
         if end:
             return _months_before(end, NUMBER_WORDS[m[1]]), end
+    m = re.fullmatch(r"(\d{1,2})\s*m\s*" + fy_tail, s)
+    if m and 1 <= int(m[1]) <= 12:
+        start = _fy(_fy_end_year(m[2], m[3]))[0]
+        month = start.month + int(m[1]) - 1
+        stop_year = start.year + (month - 1) // 12
+        month = (month - 1) % 12 + 1
+        return start, date(stop_year, month, calendar.monthrange(stop_year, month)[1])
     m = re.fullmatch(r"(" + MONTH_RE + r")\s+(\d{4})\s*(?:-|to)\s*(" + MONTH_RE + r")\s+(\d{4})", s)
     if m:
         return _month_range(m[1], m[3], int(m[2]), int(m[4]))
-    m = re.fullmatch(r"(" + MONTH_RE + r")\s*(?:-|to)\s*(" + MONTH_RE + r")\s+(\d{4})", s)
+    m = re.fullmatch(r"(" + MONTH_RE + r")\s*(?:-|to)\s*(" + MONTH_RE + r")\s+(\d{4})\s*[-/]\s*(\d{2}|\d{4})", s)
     if m:
-        return _month_range(m[1], m[2], int(m[3]))
+        return _fy_months(_fy_end_year(m[3], m[4]), MONTHS[m[1]], MONTHS[m[2]])
+    m = re.fullmatch(r"(" + MONTH_RE + r")\s*(?:-|to)\s*(" + MONTH_RE + r")\s+'?(\d{2}|\d{4})", s)
+    if m:
+        return _month_range(m[1], m[2], _year(m[3]))
     m = re.fullmatch(r"q([1-4])\s+(?:of\s+)?(\d{4})", s)
     if m:
         y, q = int(m[2]), int(m[1])
@@ -278,9 +337,14 @@ def _parse_span(s: str) -> tuple[date, date] | None:
     m = re.fullmatch(r"(?:fy|fiscal(?: year)?|financial year)\s*'?(\d{2}|\d{4})(?:\s*[-/]\s*'?(\d{2}|\d{4}))?", s)
     if m:
         return _fy(_fy_end_year(m[1], m[2]))
-    m = re.fullmatch(r"(\d{4})\s*[-/]\s*(\d{2}|\d{4})", s)
+    m = re.fullmatch(r"(\d{4})\s*(?:[-/]|to)\s*(\d{2}|\d{4})", s)
     if m:
-        return _fy(_fy_end_year(m[1], m[2]))
+        start, end = int(m[1]), _fy_end_year(m[1], m[2])
+        if end == start + 1:
+            return _fy(end)
+        if end > start:
+            return date(start, 1, 1), date(end, 12, 31)
+        return None
     m = re.fullmatch(r"(?:for the )?(?:(?:financial |fiscal )?year|twelve months|12 months) ended (?:on )?(.+)", s)
     if m:
         end = _parse_date(m[1])
@@ -303,11 +367,11 @@ def _parse_span(s: str) -> tuple[date, date] | None:
     if m:
         y, q = int(m[1]), int(m[2])
         return date(y, 3 * q - 2, 1), date(y, 3 * q, calendar.monthrange(y, 3 * q)[1])
-    m = re.fullmatch(r"(?:cy\s*)?(\d{4})", s)
+    m = re.fullmatch(r"(?:cy\s*'?(\d{2}|\d{4})|(\d{4}))", s)
     if m:
-        y = int(m[1])
+        y = _year(m[1] or m[2])
         return date(y, 1, 1), date(y, 12, 31)
-    m = re.fullmatch(r"([a-z]+)\.?\s*'?(\d{2}|\d{4})", s)
+    m = re.fullmatch(r"([a-z]+)\.?[\s-]*'?(\d{2}|\d{4})", s)
     if m and m[1] in MONTHS:
         return _month_span(MONTHS[m[1]], _year(m[2]))
     m = re.fullmatch(r"(?:end[- ])?(?:march|mar)\s*'?(\d{2}|\d{4})", s)
@@ -328,7 +392,7 @@ def parse_unit(raw) -> tuple[str, float] | None:
         return "count", 1.0
     if s in ("x", "times", "multiple"):
         return "x", 1.0
-    tokens = re.findall(r"us\$|[₹€$£]|[a-z']+|\d+s?|'000", s)
+    tokens = re.findall(r"us\$|[₹€$£]|[a-z\u00c0-\u024f']+|\d+s?|'000", s)
     currency = None
     scale = 1.0
     rest = []
@@ -337,7 +401,7 @@ def parse_unit(raw) -> tuple[str, float] | None:
         if t in CURRENCIES:
             currency = CURRENCIES[t]
         elif t in SCALES:
-            scale = SCALES[t]
+            scale *= SCALES[t]
         elif t in ("in", "of", "amount", "amounts"):
             continue
         else:
@@ -354,7 +418,7 @@ def parse_unit(raw) -> tuple[str, float] | None:
 def parse_value(raw) -> float | None:
     if raw is None:
         return None
-    s = str(raw).strip()
+    s = str(raw).strip().replace("\u2212", "-").replace("\u2013", "-")
     if not s:
         return None
     negative = s.startswith("(") and s.endswith(")")
@@ -366,6 +430,8 @@ def parse_value(raw) -> float | None:
     try:
         value = float(s)
     except ValueError:
+        return None
+    if not math.isfinite(value):
         return None
     return -value if negative else value
 
@@ -484,9 +550,16 @@ def resolve_metric(conn, key: str, label: str | None, doc_id: int) -> str:
     return target
 
 
-def canonicalise_claim(conn, claim: dict) -> dict:
+def subject_name(subject, publisher) -> str:
+    name = str(subject or "")
+    if entity_key(name) in GENERIC_SUBJECTS or squash(name) in GENERIC_SUBJECTS:
+        return publisher or "unknown"
+    return name
+
+
+def canonicalise_claim(conn, claim: dict, publisher: str | None = None) -> dict:
     keys = json.loads(claim.get("keys_json") or "{}")
-    entity_id = resolve_entity(conn, claim["subject"] or "unknown", keys)
+    entity_id = resolve_entity(conn, subject_name(claim.get("subject"), publisher), keys)
     metric = resolve_metric(conn, claim["metric_raw"], claim.get("label"), claim["doc_id"])
     period = parse_period(claim.get("period_raw"))
     unit = parse_unit(claim.get("unit_raw"))
@@ -531,9 +604,10 @@ def canonicalise_document(conn, doc_id: int) -> dict:
         " where c.doc_id = ? and c.status = 'verified' and cc.claim_id is null order by c.id",
         (doc_id,),
     )
+    publisher = (db.one(conn, "select publisher from documents where id = ?", (doc_id,)) or {}).get("publisher")
     stats = {"numeric": 0, "text": 0, "non_comparable": 0}
     for claim in claims:
-        row = canonicalise_claim(conn, claim)
+        row = canonicalise_claim(conn, claim, publisher)
         conn.execute(
             "insert into claim_canon (claim_id, entity_id, metric_key, period_start, period_end, unit_canon,"
             " value_canon, value_text, basis_canon, scope_canon, block_key, precision)"

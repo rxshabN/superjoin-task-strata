@@ -170,6 +170,7 @@ def insert_claims(conn, doc_id: int, claims: list[dict]) -> int:
     rows = []
     for c in claims:
         basis = str(c.get("basis") or "actual").lower()
+        keys = c.get("keys")
         rows.append(
             (
                 doc_id,
@@ -183,7 +184,7 @@ def insert_claims(conn, doc_id: int, claims: list[dict]) -> int:
                 _as_text(c.get("scope")),
                 basis if basis in BASIS else "actual",
                 str(c.get("quote")),
-                json.dumps(c.get("keys") or {}, ensure_ascii=False),
+                json.dumps(keys if isinstance(keys, dict) else {}, ensure_ascii=False),
             )
         )
     conn.executemany(
@@ -200,8 +201,11 @@ def insert_claims(conn, doc_id: int, claims: list[dict]) -> int:
     return len(rows)
 
 
+ADVISORY = re.compile(r"\nPages with almost no text [^\n]*\n")
+
+
 def cache_key(cache: Cache, provider, prompt: str, sha256: str, first: int, last: int) -> str:
-    stem = prompt.rsplit("\nMetric registry so far:", 1)[0]
+    stem = ADVISORY.sub("", prompt.rsplit("\nMetric registry so far:", 1)[0])
     return cache.key(provider.name, provider.model, stem, sha256, f"{first}-{last}")
 
 
@@ -243,6 +247,17 @@ def apply_document_line(conn, doc_id: int, document: dict | None):
         conn.execute(f"update documents set {assignments} where id = ?", (*fields.values(), doc_id))
 
 
+def outcome_note(status: str, stats: dict) -> str | None:
+    if status == "quota_exhausted":
+        return "the model's request quota is exhausted; upload the file again later, or with your own key"
+    if status == "partial":
+        return "the model's output was cut off repeatedly; upload the file again to retry"
+    if status == "extracted" and stats["claims"] == 0:
+        finishes = ", ".join(sorted(set(stats["finish"]))) or "no response"
+        return f"the model returned no claims (finish reason: {finishes})"
+    return None
+
+
 def extract_document(conn, doc_id: int, provider=None, cache: Cache | None = None, cfg=None) -> dict:
     cfg = cfg or config.settings
     provider = provider or providers.get_provider()
@@ -252,7 +267,9 @@ def extract_document(conn, doc_id: int, provider=None, cache: Cache | None = Non
     stats = {"requests": 0, "cached": 0, "claims": 0, "malformed": 0, "resumes": 0, "finish": [], "tokens_out": 0}
     started = time.perf_counter()
     clear_document(conn, doc_id)
-    conn.execute("update documents set status = 'extracting', model = ? where id = ?", (provider.model, doc_id))
+    conn.execute(
+        "update documents set status = 'extracting', model = ?, error = null where id = ?", (provider.model, doc_id)
+    )
     db.commit(conn)
     status = "extracted"
     for first, last in slices(doc["page_count"], cfg.pages_per_request):
@@ -301,8 +318,8 @@ def extract_document(conn, doc_id: int, provider=None, cache: Cache | None = Non
         if status in ("quota_exhausted", "partial"):
             break
     conn.execute(
-        "update documents set status = ?, ingested_at = ? where id = ?",
-        (status, datetime.now(UTC).isoformat(timespec="seconds"), doc_id),
+        "update documents set status = ?, error = ?, ingested_at = ? where id = ?",
+        (status, outcome_note(status, stats), datetime.now(UTC).isoformat(timespec="seconds"), doc_id),
     )
     db.commit(conn)
     stats["status"] = status

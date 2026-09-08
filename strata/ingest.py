@@ -10,6 +10,7 @@ import pymupdf
 from . import db
 
 THIN_WORDS = 40
+THIN_NUMBERS = 3
 MAX_HINTS = 3
 
 CURRENCY = {
@@ -110,13 +111,17 @@ def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def thin(text: str, words: int) -> bool:
+    return words < THIN_WORDS and len(re.findall(r"\d[\d,.]*", text)) < THIN_NUMBERS
+
+
 def page_records(doc) -> list[tuple]:
     records = []
     for page_no, page in enumerate(doc, start=1):
         text = page.get_text()
         words = len(text.split())
         hints = detect_hints(text)
-        records.append((page_no, text, words, json.dumps(hints, ensure_ascii=False), int(words < THIN_WORDS)))
+        records.append((page_no, text, words, json.dumps(hints, ensure_ascii=False), int(thin(text, words))))
     return records
 
 

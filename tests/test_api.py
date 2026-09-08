@@ -105,8 +105,11 @@ def test_documents_and_counts(client):
 
 
 def test_claims_filters(client):
-    all_claims = client.get("/claims").json()["claims"]
-    assert len(all_claims) == 3
+    listing = client.get("/claims").json()
+    all_claims = listing["claims"]
+    assert len(all_claims) == 3 and listing["total"] == 3
+    page = client.get("/claims?limit=2&offset=2").json()
+    assert len(page["claims"]) == 1 and page["total"] == 3 and page["offset"] == 2
     verified = client.get("/claims?status=verified&metric=gdp_growth").json()["claims"]
     assert [c["value_raw"] for c in verified] == ["6.4", "6.5"]
     assert verified[0]["entity"] == "india" and verified[0]["period_start"] == "2024-04-01"
@@ -119,8 +122,11 @@ def test_claims_filters(client):
 
 
 def test_relations_and_detail(client):
-    rels = client.get("/relations").json()["relations"]
-    assert len(rels) == 1 and rels[0]["kind"] == "supersedes" and rels[0]["dimension"] == "basis"
+    listing = client.get("/relations").json()
+    rels = listing["relations"]
+    assert len(rels) == 1 and listing["total"] == 1
+    assert rels[0]["kind"] == "supersedes" and rels[0]["dimension"] == "basis"
+    assert client.get("/relations?limit=1&offset=1").json()["relations"] == []
     assert rels[0]["a"]["value_raw"] == "6.5" and rels[0]["b"]["value_raw"] == "6.4"
     assert client.get("/relations?kind=contradicts").json()["relations"] == []
     detail = client.get(f"/relations/{rels[0]['id']}").json()
@@ -191,9 +197,39 @@ def test_upload_runs_pipeline(client, monkeypatch):
 
 
 def test_upload_rejections(client):
-    assert client.post("/documents", files={"file": ("x.txt", b"hello", "text/plain")}).status_code == 400
-    big = make_pdf(["p"] * 4)
-    assert client.post("/documents", files={"file": ("big.pdf", big, "application/pdf")}).status_code == 413
+    post = lambda name, data: client.post("/documents", files={"file": (name, data, "application/pdf")})  # noqa: E731
+    assert post("x.txt", b"hello").status_code == 400
+    assert post("big.pdf", make_pdf(["p"] * 4)).status_code == 413
+    assert post("broken.pdf", b"%PDF-1.7\n" + bytes(range(256)) * 8).status_code == 400
+    locked = pymupdf.open()
+    locked.new_page().insert_text((72, 72), "secret " * 50)
+    encrypted = locked.tobytes(encryption=pymupdf.PDF_ENCRYPT_AES_256, user_pw="pw", owner_pw="pw")
+    r = post("locked.pdf", encrypted)
+    assert r.status_code == 400 and "password" in r.json()["detail"]
+    empty = (
+        b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\n"
+        b"endobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n"
+    )
+    r = post("empty.pdf", empty)
+    assert r.status_code == 400 and "no pages" in r.json()["detail"]
+    prefixed = post("prefixed.pdf", b"\r\n%junk\r\n" + make_pdf(["word " * 50]))
+    assert prefixed.status_code == 202 and prefixed.json()["page_count"] == 1
+
+
+def test_reupload_requeues_a_document_stuck_mid_pipeline(client, monkeypatch):
+    from strata import pipeline
+
+    monkeypatch.setattr(pipeline.providers, "get_provider", lambda *a, **k: ScriptedProvider())
+    pdf = make_pdf(["Acme revenue was 12 crore in FY24 " * 5])
+    doc_id = client.post("/documents", files={"file": ("acme.pdf", pdf, "application/pdf")}).json()["id"]
+    assert client.get(f"/documents/{doc_id}").json()["status"] == "ready"
+    for stuck in ("verifying", "reconciling", "failed"):
+        with __import__("strata.api", fromlist=["connection"]).connection() as conn:
+            conn.execute("update documents set status = ? where id = ?", (stuck, doc_id))
+            conn.commit()
+        again = client.post("/documents", files={"file": ("acme.pdf", pdf, "application/pdf")}).json()
+        assert again["new"] is False and again["status"] == "queued"
+        assert client.get(f"/documents/{doc_id}").json()["status"] == "ready"
 
 
 def test_health_and_static(client):

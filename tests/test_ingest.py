@@ -42,6 +42,17 @@ def test_scope_and_period():
     assert hints["text_layer"] is True
 
 
+def test_thin_pages_keep_number_heavy_slides():
+    from strata.ingest import thin
+
+    assert thin("Earnings Presentation\nQ4 & FY24", 5)
+    assert thin("Appendix\n17", 2)
+    assert thin("", 0)
+    assert not thin("Revenue from services\n₹2,450 Cr\nQ2 FY26\nup 12% YoY", 9)
+    assert not thin("Headcount\n58,000 employees\nas of September 30, 2025", 7)
+    assert not thin("word " * 40, 40)
+
+
 def test_no_text_layer():
     hints = detect_hints("")
     assert hints == {"units": [], "scopes": [], "periods": [], "text_layer": False}
