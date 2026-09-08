@@ -40,7 +40,10 @@ def commit(conn):
     conn.commit()
     sync = getattr(conn, "sync", None)
     if sync:
-        sync()
+        try:
+            sync()
+        except ValueError:
+            pass
 
 
 def rows(conn, sql: str, params=()) -> list[dict]:

@@ -16,7 +16,7 @@ response cache exist; the pipeline arrives in later phases.**
 ## Setup and Run Instructions
 
 ```bash
-uv sync --extra dev
+uv sync
 cp .env.example .env
 uv run uvicorn strata.api:app --reload
 ```
