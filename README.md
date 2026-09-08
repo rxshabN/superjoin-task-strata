@@ -25,7 +25,7 @@ uv run uvicorn strata.api:app --reload
 Open http://127.0.0.1:8000. This needs no API key: `data/strata.db` holds the six starter
 PDFs fully processed, and every model response is in `data/cache/`. Browse the documents,
 facts, relations, quarantine and the Answer view; the four demo questions on the Answer view
-replay from the cache too. Tests: `uv run pytest` (188 tests, about four seconds).
+replay from the cache too. Tests: `uv run pytest` (189 tests, about four seconds).
 
 To process new PDFs, or to ask a question that is not cached, the server needs a model.
 Copy `.env.example` to `.env` and pick one:
@@ -56,10 +56,13 @@ The demo runs on Cloud Run in the same GCP project as Vertex AI, so the service 
 authenticates to Gemini without any key:
 
 ```bash
-gcloud run deploy strata --source . --region asia-south1 --allow-unauthenticated \
-  --min-instances 1 --memory 1Gi \
-  --set-env-vars GEMINI_BACKEND=vertex,GOOGLE_CLOUD_PROJECT=<PROJECT>,GOOGLE_CLOUD_LOCATION=global,STRATA_DB=turso,STRATA_REPLICA_PATH=/tmp/replica.db,TURSO_DATABASE_URL=<URL>,TURSO_AUTH_TOKEN=<TOKEN>
+gcloud run deploy strata --source . --region asia-south1 --allow-unauthenticated \n  --min-instances 1 --max-instances 2 --memory 2Gi --cpu 1 --no-cpu-throttling --timeout 300 \n  --set-env-vars GEMINI_BACKEND=vertex,GOOGLE_CLOUD_PROJECT=<PROJECT>,GOOGLE_CLOUD_LOCATION=global,STRATA_DB=turso,STRATA_REPLICA_PATH=/tmp/replica.db,TURSO_DATABASE_URL=<URL>,TURSO_AUTH_TOKEN=<TOKEN>
 ```
+
+One minimum instance keeps the demo awake, and CPU stays allocated after a response so the
+background pipeline runs at full speed. Uploads and their PDF bytes persist in Turso across
+restarts and redeploys. On the hosted demo a 23-page presentation went from upload to ready in
+65 seconds, model time included.
 
 API, all JSON: `GET /health`, `GET /documents`, `POST /documents` (multipart `file`),
 `GET /claims`, `GET /claims/{id}`, `GET /relations`, `GET /relations/{id}`,
@@ -291,7 +294,7 @@ strata/            the package, one module per stage
   schema.sql       plain SQL, identical on SQLite and libSQL
 web/               vanilla JS and Tailwind over the API, no build step
 scripts/           build_corpus.py, seed_turso.py
-tests/             188 tests
+tests/             189 tests
 data/              strata.db and cache/
 starter-datasets/  the six PDFs shipped with the assignment
 ```
