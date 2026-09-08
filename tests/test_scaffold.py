@@ -31,9 +31,9 @@ def test_settings_defaults():
 
 
 def test_settings_from_env():
-    s = config.load({"STRATA_PROVIDER": "ollama", "OLLAMA_MODEL": "x", "STRATA_DB": "turso"})
-    assert s.provider == "ollama"
-    assert s.model == "x"
+    s = config.load({"STRATA_PROVIDER": "gemini", "GEMINI_MODEL": "gemini-3.8-flash", "STRATA_DB": "turso"})
+    assert s.provider == "gemini"
+    assert s.model == "gemini-3.8-flash"
     assert db.backend(s) == "turso"
     v = config.load({"GEMINI_BACKEND": "vertex", "GOOGLE_CLOUD_PROJECT": "p1"})
     assert v.gemini_backend == "vertex" and v.gcp_project == "p1" and v.gcp_location == "global"
@@ -112,7 +112,6 @@ def test_generate_uses_cache(tmp_path):
 
 def test_provider_selection():
     assert get_provider("gemini", api_key="test-key").name == "gemini"
-    assert get_provider("ollama").name == "ollama"
     with pytest.raises(ValueError):
         get_provider("nope")
 

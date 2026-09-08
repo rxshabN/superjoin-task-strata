@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <clipPath id="r"><rect width="64" height="64" rx="14"/></clipPath>
+  </defs>
+  <g clip-path="url(#r)">
+    <rect width="64" height="64" fill="#1f5f52"/>
+    <rect y="40" width="64" height="24" fill="#27705f"/>
+    <rect y="52" width="64" height="12" fill="#2f7f6c"/>
+  </g>
+  <text x="32" y="46" text-anchor="middle" font-family="Georgia, 'Iowan Old Style', 'Times New Roman', serif" font-weight="700" font-size="42" fill="#f6f5f1">S</text>
+</svg>

@@ -9,10 +9,7 @@ def get_provider(name: str | None = None, **kwargs) -> Provider:
         from .gemini import GeminiProvider
 
         return GeminiProvider(**kwargs)
-    if name == "ollama":
-        from .ollama import OllamaProvider
 
-        return OllamaProvider(**kwargs)
     raise ValueError(f"unknown provider {name!r}")
 
 

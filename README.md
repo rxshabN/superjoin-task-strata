@@ -1,20 +1,20 @@
 # Strata
 
-A fact knowledge layer that treats every fact as a dated, scoped, grounded claim, so
-contradiction becomes a decision rather than a guess.
+Strata is a fact knowledge layer for PDFs. Upload documents, and it pulls out the facts, ties each one to
+the exact place on the page it came from, and works out which facts agree, which disagree, and which only
+look like they disagree.
 
-A fact is not a string. It is a claim with coordinates: entity, metric, period, scope, basis
-and unit, carrying provenance (publisher, publication date) and a quote that was re-found on
-the cited page. Two claims contradict *only* if every coordinate matches and the values still
-differ. If a coordinate differs they do not contradict, they reconcile, and the differing
-coordinate *is* the explanation.
+The one idea behind it: a fact is not a string, it is a claim with coordinates. Entity, metric, period, scope,
+basis and unit, plus who published it and when, plus a quote that was re-found on the cited page. Two claims
+contradict only if every coordinate matches and the values still differ. If a coordinate differs, they do
+not contradict; that coordinate is the explanation.
 
-Hosted demo: `https://strata-600642773754.asia-south1.run.app` (Cloud Run, backed by Turso; uploads and questions are live).
-The repository also runs with no key at all, on the committed corpus.
+Live demo: `https://strata-600642773754.asia-south1.run.app` (Cloud Run + Turso).
+The repository also runs locally with no API key, on the committed corpus.
 
 ## Setup and Run Instructions
 
-Requires Python 3.11 and [uv](https://docs.astral.sh/uv/).
+Needs Python 3.11 and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 git clone https://github.com/rxshabN/superjoin-task-strata.git strata && cd strata
@@ -22,63 +22,30 @@ uv sync
 uv run uvicorn strata.api:app --reload
 ```
 
-Open http://127.0.0.1:8000. This needs no API key: `data/strata.db` holds the six starter
-PDFs fully processed, and every model response is in `data/cache/`. Browse the documents,
-facts, relations, quarantine and the Answer view; the four demo questions on the Answer view
-replay from the cache too, because the model client is only created on the first live
-request. Tests: `uv run pytest` (249 tests, about fifteen seconds).
+Open http://127.0.0.1:8000. No API key is needed for this: `data/strata.db` already holds the six starter
+PDFs fully processed, and every model response is in `data/cache/`, so the four demo questions on the
+Answer view replay from cache as well. Tests: `uv run pytest` (249 tests, about fifteen seconds).
 
-To process new PDFs, or to ask a question that is not cached, the server needs a model.
-Copy `.env.example` to `.env` and pick one:
+To upload new PDFs or ask new questions, the server needs a model. Copy `.env.example` to `.env` and pick one:
 
-- `GEMINI_BACKEND=aistudio` with a free `GEMINI_API_KEY` from AI Studio. The free tier
-  allows 5 requests a minute and 20 a day per model, and failed requests count, so the
-  client retries 429 twice and 503 never.
-- `GEMINI_BACKEND=vertex` with `GOOGLE_CLOUD_PROJECT` set and `gcloud auth
-  application-default login` done. No daily cap. This is what built the corpus.
-- `STRATA_PROVIDER=ollama` with a local vision model, for a fully offline run.
+- `GEMINI_BACKEND=aistudio` with a free `GEMINI_API_KEY`. The free tier allows 5 requests a minute and 20 a
+  day, and failed requests count, so the client retries 429 twice and 503 never.
+- `GEMINI_BACKEND=vertex` with `GOOGLE_CLOUD_PROJECT` set and `gcloud auth application-default login` done.
+  No daily cap. This is what built the corpus.
 
-An upload can also carry its own key for that request only, in the `X-Gemini-Key` header or
-the optional field on the upload form; it is never stored. Uploads are capped at 20 MB and
-100 pages (`STRATA_MAX_UPLOAD_MB`, `STRATA_MAX_UPLOAD_PAGES`), and a document is sent to the
-model in 50-page slices, one request each. Password-protected, empty and non-PDF files are
-refused with a reason; a document that ends with no claims, a truncated response or an
-exhausted quota says so on its row, and uploading the same file again re-runs it. A document
-still being processed is not queued twice: a second upload of the same bytes returns its
-current status, and only a document untouched for fifteen minutes counts as stuck. Questions
-are capped at 500 characters.
+An upload can also carry its own key for that one request (the `X-Gemini-Key` header, or the optional field
+on the form); it is never stored. Uploads are capped at 20 MB and 100 pages and go to the model in 50-page
+slices, one request each. Password-protected, empty and non-PDF files are refused with a reason. A document
+that ends with no claims, a cut-off response or an exhausted quota says so on its row, and uploading the same
+file again re-runs it. Questions are capped at 500 characters.
 
-Rebuilding the corpus from scratch replays the cache and makes zero requests:
+Rebuild the corpus from scratch (replays the cache, zero requests, about ten seconds):
 
 ```bash
 uv run python scripts/build_corpus.py --extract --consolidate
 ```
 
 Docker: `docker build -t strata . && docker run -p 8000:8000 strata`.
-
-Hosted: set `STRATA_DB=turso`, `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN`, seed the
-database once with `uv run python scripts/seed_turso.py`, then deploy the container.
-The demo runs on Cloud Run in the same GCP project as Vertex AI, so the service account
-authenticates to Gemini without any key:
-
-```bash
-gcloud run deploy strata --source . --region asia-south1 --allow-unauthenticated \
-  --min-instances 1 --max-instances 2 --memory 2Gi --cpu 1 --no-cpu-throttling --timeout 300 \
-  --set-env-vars GEMINI_BACKEND=vertex,GOOGLE_CLOUD_PROJECT=<PROJECT>,GOOGLE_CLOUD_LOCATION=global,STRATA_DB=turso,STRATA_REPLICA_PATH=/tmp/replica.db,TURSO_DATABASE_URL=<URL>,TURSO_AUTH_TOKEN=<TOKEN>
-```
-
-One minimum instance keeps the demo awake, and CPU stays allocated after a response so the
-background pipeline runs at full speed. Uploads and their PDF bytes persist in Turso across
-restarts and redeploys. On the hosted demo a 23-page presentation went from upload to ready in
-65 seconds, model time included.
-
-API, all JSON: `GET /health`, `GET /documents`, `POST /documents` (multipart `file`),
-`GET /claims`, `GET /claims/{id}`, `GET /relations`, `GET /relations/{id}`,
-`GET /quarantine`, `GET /metrics`, `GET /entities`, `GET /answer?entity=&metric=&period=`,
-`POST /ask` (`{"question": "..."}`), `GET /pages/{doc}/{page}.png?claim=` for a page
-render with the claim's evidence highlighted. The UI is static files over the same API,
-and every view is addressable: `#relation/145`, `#claim/301`,
-`#answer?q=What%20was%20India%27s%20GDP%20growth%20in%20FY25%3F`.
 
 ## Video Demo
 
@@ -94,253 +61,204 @@ and every view is addressable: `#relation/145`, `#claim/301`,
 
 ## Approach
 
-### The thesis
+### The idea
 
-Most fact extractors produce strings, embed them, and flag pairs of numbers that differ.
-That is a contradiction detector with no notion of *why*, and it raises a false alarm on
-every document that measures the same thing two legitimate ways. Strata extracts claims with
-coordinates instead, and puts one small decision procedure at the centre. One mechanism
-produces all three relationship kinds the brief asks for; there are no separate detectors.
+Most extractors produce strings, embed them, and flag pairs of numbers that differ. That raises a false alarm
+on every document that measures the same thing two legitimate ways, and it cannot say why two figures differ.
+Strata extracts claims with coordinates and runs one small decision procedure over them. That single
+mechanism produces all three relationship kinds; there are no separate detectors.
 
-Grounding is verified, not asserted. Every claim the model emits carries a verbatim quote,
-and the quote must be re-found in the text layer of the cited page before the claim becomes a
-fact. What cannot be re-found goes to a visible quarantine with a typed reason. That gate is
-the anti-hallucination mechanism, and it is the fourth required case running as a feature.
+Grounding is verified, not trusted. Every claim the model returns must include a verbatim quote, and the quote
+has to be found again on the cited page before the claim counts as a fact. Anything that cannot be found goes
+to a visible quarantine with a reason.
 
-### Pipeline
+### How it works
 
-Five stages. Only the second uses a language model; every judgement the system makes happens
-in ordinary Python afterwards, so all of it can be rerun from the response cache for free.
+Five stages. Only the second one uses a language model; everything after it is plain Python, so all of it can
+be rerun from the cached responses.
 
-| Stage | What it does | Writes |
-|---|---|---|
-| Ingest | PyMuPDF text per page, word counts, and three regex hints per page: a unit declaration such as "All amounts in Indian Rupees in million", a consolidated/standalone marker, a period header. Pages under 40 words with fewer than three numbers are skipped (covers and dividers, not KPI slides). A document is keyed by SHA-256, so re-uploading is a no-op. | `documents`, `pages` |
-| Extract | 50-page slices sent as native PDF to Gemini 3.8 Flash with the page hints and the metric keys seen so far. One JSON object per line: subject, metric key, the document's own label, value, unit, period, scope, basis, a verbatim quote, and identifiers such as DIN or CIN. The first slice also returns a document line: title, publisher, publication date. Temperature 0, fixed seed, raw response cached under a hash of the PDF slice and the prompt without its two advisory lines (the registry and the skipped-page list), so the cache survives registry growth. | `claims` |
-| Verify | The quote is normalised and searched on the cited page (`exact`), on the neighbouring pages (`nearby`), then as a bag of numbers and words (`tokens`). Pass: grade, character span (a linear word-by-word scan, no regex backtracking) and bounding boxes stored. Fail: quarantine with a reason. | `evidence`, `quarantine` |
-| Canonicalise | Period strings become date intervals (FY25, 2024-25, FY2024/25, Q3:2024-25, Q3-2024, 3Q-2024, 2025:Q2, 30-Sep-24 and "first quarter of FY2025/26" all resolve; month-first dates such as 12/31/2024 are recognised when the day cannot be a month; an unreadable period leaves the claim non-comparable rather than failing the document). Units become a base unit and scaled value, with stacked scales multiplied (a lakh crore is 10^12), a scale letter after a currency symbol read ($M, $B), and the printed precision kept for tolerance. A unit the model writes as a bare scale ("million") takes the single currency printed on its page when the label names a money measure, and stays a count otherwise. Entities resolve by identifier first, then by normalised name; a generic subject such as "the Company" resolves to the document's publisher. Basis is read from the claim, from markers like "(P)", "(AE)" or a trailing BE/RE, or from phrases in the quote. Metric keys join a registry that grows per document. Block key = entity, metric, interval. | `entities`, `metrics`, `claim_canon` |
-| Reconcile | Every pair inside a block goes through the decision procedure below. When a document is added, only the blocks it touches are recomputed. | `relations` |
+1. **Ingest.** PyMuPDF reads the text of each page and picks up three hints per page: a unit declaration such
+   as "All amounts in Indian Rupees in million", a consolidated or standalone marker, and a period header.
+   Near-empty pages (under 40 words and fewer than three numbers) are skipped. Documents are keyed by SHA-256,
+   so re-uploading one is a no-op.
+2. **Extract.** 50-page slices go to Gemini 3.8 Flash as native PDF, with the page hints and the metric keys
+   seen so far. It returns one JSON object per fact: subject, metric key, the document's own label, value,
+   unit, period, scope, basis, a verbatim quote, and any identifiers printed with the entity (a DIN, a CIN).
+   The first slice also returns the document's title, publisher and date. Temperature 0, fixed seed, and
+   every raw response is cached under a hash of the slice and the prompt.
+3. **Verify.** The quote is normalised and searched on the cited page (`exact`), then on the neighbouring
+   pages (`nearby`), then as a bag of numbers and words (`tokens`). A hit stores the grade, character span and
+   bounding boxes. A miss goes to quarantine with a reason.
+4. **Canonicalise.** Periods become date intervals (FY25, 2024-25, FY2024/25, Q3-2024, 2025:Q2, 30-Sep-24,
+   "twelve months ended September 28, 2024" all resolve; an unreadable period leaves the claim non-comparable
+   rather than failing the document). Units become a base unit and a scale, so 8,142 crore and 81,415.38
+   million can be compared, with the printed precision kept as tolerance. A bare "million" on a money-like
+   label takes the currency printed on its page. Entities resolve by identifier first, then by normalised
+   name; "the Company" resolves to the publisher. Basis is read from the claim, from markers such as "(P)" or
+   a trailing BE/RE, or from phrases in the quote. Metric keys join a registry that grows with each document.
+   The block key is entity, metric and interval.
+5. **Reconcile.** Every pair inside a block goes through the decision procedure below. Adding a document
+   recomputes only the blocks it touches.
 
 ### The decision procedure
 
-For two numeric claims that share entity, metric and period, with units already in base
-terms:
+For two numeric claims with the same entity, metric and period, in base units:
 
-1. If the values agree within the printed precision, they **corroborate**. Any scope or basis
-   difference is noted on the relation rather than blocking it.
-2. If both state a scope and the scopes differ, they are **reconciled by scope**. Standalone
-   against consolidated is the textbook case.
-3. If both come from the same publisher and their labels name different rows, they are two
-   line items under one key, **reconciled by label** at low confidence. This runs before the
-   basis rule, so a release that files several series under one key cannot make one series
-   supersede another.
-4. If the bases differ and both are ranked (advance estimate < provisional < revised <
-   actual), the more mature basis **supersedes** the other. When one basis is unranked (a
-   projection, a budget, a pro forma restatement) and the same publisher printed the later
-   figure in a later publication, the later figure **supersedes** as a restatement; otherwise
-   the two only reconcile by basis.
-5. If one side states no scope and the other does, they are reconciled by scope at low
-   confidence: unstated never contradicts.
-6. If both come from the same publisher, a later publication date means a restatement, which
-   supersedes; otherwise a contradiction for review.
-7. Otherwise it is a **contradiction for review**: different publishers, every coordinate
-   matched, values differ. Provenance never blocks a comparison; it only decides which of two
-   disagreeing claims is current.
+1. Values agree within the printed precision: they **corroborate**. A scope or basis difference is noted on
+   the relation, not used to block it.
+2. Both state a scope and the scopes differ: **reconciled by scope**. Standalone against consolidated is the
+   textbook case.
+3. Same publisher, and the labels name different rows: two line items under one key, **reconciled by label**
+   at low confidence. This runs before the basis rule so one release cannot make one series supersede another.
+4. Bases differ and both are ranked (advance estimate < provisional < revised < actual): the more mature one
+   **supersedes**. If one basis is unranked (a projection, a budget, a pro forma restatement) and the same
+   publisher printed the later figure in a later publication, the later figure supersedes as a restatement;
+   otherwise they reconcile by basis.
+5. One side states no scope: reconciled by scope at low confidence. Unstated never contradicts.
+6. Same publisher, later publication date: a restatement, which supersedes. Same publisher, same date: a
+   contradiction for review.
+7. Otherwise: a **contradiction for review**. Different publishers, every coordinate matched, values differ.
+   Provenance never blocks a comparison; it only decides which of two disagreeing claims is current.
 
-String-valued claims (a director's role, a rating) block on entity and metric only. Equal
-values corroborate; different values with different as-of dates supersede by time; the same
-as-of date is a contradiction. A DIN printed beside a name is the entity key, so two documents
-agree on who is meant.
+Text-valued claims (a director's role, a rating) block on entity and metric only: equal values corroborate,
+different values with different as-of dates supersede by time, the same as-of date is a contradiction. A DIN
+printed beside a name is the entity key, so two documents agree on who is meant.
 
-Confidence has one meaning per level: `high` is the procedure's own verdict, `low` marks a
-heuristic (unstated scope, two line items), `review` marks a contradiction a person should
-look at.
+Confidence has one meaning per level: `high` is the procedure's own verdict, `low` marks a heuristic (an
+unstated scope, two line items), `review` marks a contradiction a person should look at.
 
 ### The Answer view
 
-The Answer view is the extension on top: ask for an entity, metric and period and it returns
-the current claim, everything that claim superseded and why, what corroborates it, and what
-contradicts it. Nothing is generated; it is a lookup over the relations table. "Current" is
-chosen by basis maturity, then by how many other claims corroborate it, then by publication
-date. A question in plain English costs one model request to turn the words into those three
-coordinates, from the registry and entity list; the model never sees the facts, and the page
-shows how the question was read. This is the direct answer to knowledge bases that quietly go
-stale: staleness is modelled, not accidental.
+Ask for an entity, metric and period and you get the current claim, everything it superseded and why, what
+corroborates it and what contradicts it. Nothing is generated; it is a lookup over the relations table.
+"Current" is chosen by basis maturity, then by how many claims corroborate it, then by publication date. A
+question in plain English costs one model request to turn the words into those three coordinates; the model
+never sees the facts, and the page shows how the question was read. This is the answer to knowledge bases
+that quietly go stale: staleness is modelled, not accidental.
 
 ### The four cases, from real output
 
-Nothing below is encoded anywhere. The ids are rows the engine produced on the six starter
-PDFs; every link opens the evidence with the quote highlighted on the rendered page.
+Nothing below is hard-coded. The ids are rows the engine produced on the six starter PDFs, and each link opens
+the evidence with the quote highlighted on the rendered page.
 
-**Case 1, corroborated across documents.** [`#relation/145`](https://strata-600642773754.asia-south1.run.app/#relation/145).
-The FY24 annual report, page 36: "Revenue from contracts with customers 81,415.38", in INR
-million, consolidated. The Q4 FY24 earnings deck, page 6: "₹8,142 Cr FY24 revenue from
-services". Different unit systems, different phrasing, different scope wording. In base units
-the two agree within the printed precision of the crore figure, so the engine calls them one
-fact and notes that the scope wording differed.
+**Case 1, corroborated across documents.**
+[`#relation/145`](https://strata-600642773754.asia-south1.run.app/#relation/145). The FY24 annual report,
+page 36: "Revenue from contracts with customers 81,415.38", INR million, consolidated. The Q4 FY24 earnings
+deck, page 6: "₹8,142 Cr FY24 revenue from services". Different units, different phrasing, different scope
+wording. In base units they agree within the printed precision, so the engine calls them one fact and notes
+that the scope wording differed.
 
-**Case 3, an apparent contradiction explained by context.** Two instances.
-By basis, [`#relation/307`](https://strata-600642773754.asia-south1.run.app/#relation/307): the Economic Survey (January 2025,
-page 4) says "As per the first advance estimates of national accounts, India's real GDP is
-estimated to grow by 6.4 per cent in FY25"; the IMF Article IV (November 2025, page 3) says
-"economic growth of 6.5 percent in FY2024/25". Same entity, metric, period and unit, values
-differ, but the Survey labels its figure an advance estimate, so the IMF figure supersedes it
-with the reason attached. The RBI annual report's provisional 6.5 supersedes the same claim
-([`#relation/306`](https://strata-600642773754.asia-south1.run.app/#relation/306)). Ask the Answer view for India's GDP growth
-in FY25 and you get 6.5, with both 6.4 claims kept as history. A retrieval system would
-happily answer 6.4.
-By scope, [`#relation/161`](https://strata-600642773754.asia-south1.run.app/#relation/161): the same annual-report page carries
-"Revenue from Operations" as 74,540.82 (standalone) and 81,415.38 (consolidated). Not a
-contradiction; the scope coordinate differs, and that is the explanation shown.
+**Case 3, an apparent contradiction explained by context.**
+By basis, [`#relation/307`](https://strata-600642773754.asia-south1.run.app/#relation/307): the Economic
+Survey (January 2025, page 4) says "As per the first advance estimates of national accounts, India's real GDP
+is estimated to grow by 6.4 per cent in FY25"; the IMF Article IV (November 2025, page 3) says "economic
+growth of 6.5 percent in FY2024/25". Same entity, metric, period and unit, values differ, but the Survey's
+figure is an advance estimate, so the IMF figure supersedes it and the reason is attached. The RBI's
+provisional 6.5 supersedes the same claim
+([`#relation/306`](https://strata-600642773754.asia-south1.run.app/#relation/306)). Ask the Answer view for
+India's GDP growth in FY25 and you get 6.5, with both 6.4 claims kept as history. A retrieval system would
+answer 6.4.
+By scope, [`#relation/161`](https://strata-600642773754.asia-south1.run.app/#relation/161): one annual-report
+page carries "Revenue from Operations" as 74,540.82 (standalone) and 81,415.38 (consolidated). Not a
+contradiction; the scope differs, and that is the explanation shown.
 
-**Case 2, a genuine contradiction.** [`#relation/253`](https://strata-600642773754.asia-south1.run.app/#relation/253). The RBI
-annual report, page 17: "CPI inflation for 2025-26 is projected at 4.0 per cent". The IMF,
-page 13: "Headline inflation is expected to remain benign and average 2.8 percent in
-FY2025/26". Two institutions, same year, same measure, both projections, 4.0 against 2.8.
-Different publishers never supersede each other, so the engine flags the pair for review and
-shows both spans. The corpus holds 15 such cross-document contradictions, all for review;
-another is the Survey's first advance estimate of FY25 growth (6.4) against the RBI's second
-advance estimate (6.5), which the engine cannot order because both carry the same basis label
+**Case 2, a genuine contradiction.**
+[`#relation/253`](https://strata-600642773754.asia-south1.run.app/#relation/253). RBI annual report, page 17:
+"CPI inflation for 2025-26 is projected at 4.0 per cent". IMF, page 13: "Headline inflation is expected to
+remain benign and average 2.8 percent in FY2025/26". Same year, same measure, both projections, two
+institutions, 4.0 against 2.8. Publishers never supersede each other, so the pair is flagged for review with
+both spans. The corpus holds 15 such cross-document contradictions. Another is the Survey's first advance
+estimate of FY25 growth (6.4) against the RBI's second advance estimate (6.5), which the engine cannot order
+because both carry the same basis label
 ([`#relation/304`](https://strata-600642773754.asia-south1.run.app/#relation/304)).
 
-**Case 4, an extraction failure and how it is handled.** Two shapes.
-[`#claim/301`](https://strata-600642773754.asia-south1.run.app/#claim/301): a chart on deck page 9 whose text layer reads
-"4,191 4,552 5,077 FY22 FY23 FY24 Express Parcel revenue". The page has lost the binding
-between year and value, so the gate can prove 5,077 is on the page but not that it belongs to
-FY24. The claim is accepted at the `tokens` grade and shown as weakly grounded; 59 claims in
-the corpus sit there. [`#claim/190`](https://strata-600642773754.asia-south1.run.app/#claim/190): the model read "81,415 FY24"
-off an infographic and cited page 11, where it is not. The quote was not found on that page or
-its neighbours, so the claim never became a fact and sits in the quarantine with its reason;
-the same figure entered the layer from page 22, where it could be verified. 26 claims are
-quarantined, each with a typed reason.
+**Case 4, an extraction failure and how it is handled.**
+[`#claim/301`](https://strata-600642773754.asia-south1.run.app/#claim/301): a chart on deck page 9 whose text
+layer reads "4,191 4,552 5,077 FY22 FY23 FY24 Express Parcel revenue". The binding between year and value is
+lost, so the gate can prove 5,077 is on the page but not that it belongs to FY24. The claim is kept at the
+`tokens` grade and shown as weakly grounded; 59 claims in the corpus sit there.
+[`#claim/190`](https://strata-600642773754.asia-south1.run.app/#claim/190): the model read "81,415 FY24" off an
+infographic and cited page 11, where it is not. The quote was not found on that page or its neighbours, so the
+claim never became a fact and sits in quarantine with its reason. The same figure entered the layer from page
+22, where it could be verified. 26 claims are quarantined, each with a typed reason.
 
-A fifth relation worth a look: the 2022 prospectus lists Suvir Suren Sujan as a
-non-executive nominee director and the FY24 annual report records his resignation on
-August 24, 2023. Matched on DIN 01173669, the later state supersedes the earlier one by time
-([`#relation/207`](https://strata-600642773754.asia-south1.run.app/#relation/207)).
+### Decisions and trade-offs
 
-### Engineering decisions and trade-offs
+- **One model stage, four deterministic ones.** Only extraction uses a model. Verification, canonicalisation
+  and reconciliation are plain Python with 249 tests, so a bug found late costs code, not quota.
+- **No embeddings, no graph database.** Comparison happens inside blocks keyed by entity, metric and date
+  interval. Narrower than similarity search, on purpose: when the engine says two claims disagree, it can say
+  on what.
+- **The quote gate.** Requiring a verbatim quote that can be re-found costs recall on charts and infographics
+  (they become `tokens` or quarantine) and buys the guarantee that every fact points at a real span on a real
+  page.
+- **Native PDF slices, not page images or plain text.** The model sees layout, and a 50-page slice with a cap
+  of 8 claims per page stays well under the output token ceiling. A cut-off response drops its last page and
+  resumes from it.
+- **Committed database and response cache.** A reviewer would see the real output without an API key, and a cold rebuild
+  makes zero requests. The cost is about 23 MB in git.
+- **SQLite locally, the same schema on Turso when hosted.** Plain SQL, no ORM, one file to read.
+- **Registry consolidation is one request with a validator.** After the build, the model sees the whole
+  registry once and proposes merges; the code accepts a merge only if both keys exist, the unit classes agree
+  and no chains form. It proposed two, both accepted, and declined to merge `revenue_from_operations` with
+  `revenue_from_contracts_with_customers`, a defensible accounting distinction.
+- **Gemini 3.8 Flash at temperature 0 with a fixed seed.** On the earnings deck, 3.8 and 3.7 Flash gave 78 to
+  79 well-grounded claims, 3.6 fewer, and the Lite models invented a "consolidated" scope on every claim.
 
-- **One model stage, four deterministic stages.** Extraction is the only place a model
-  reads pages. Verification, canonicalisation and reconciliation are plain Python with 249
-  tests, so their behaviour is predictable and a bug found late costs code, not quota.
-- **No embeddings, no graph database.** Comparison happens inside blocks keyed by entity,
-  metric and date interval. This is narrower than similarity search and that is the point:
-  when the engine says two claims disagree, it can say on what.
-- **The quote gate over trusting the model.** A verbatim quote that must be re-found costs
-  recall on charts and infographics (they become `tokens` or quarantine) and buys the
-  guarantee that every fact points at a real span on a real page.
-- **Native PDF slices, not page images or plain text.** The model sees layout, and the
-  50-page slice with an 8-claims-per-page cap keeps output far under the 65K token ceiling.
-  Truncated responses drop the last page and resume from it.
-- **Committed database and response cache.** The whole corpus and every model response are in
-  the repository, so a reviewer sees the real output without a key, and a cold rebuild makes
-  zero requests. The cost is 29 MB in git.
-- **SQLite locally, the same schema on Turso hosted.** Plain SQL, no ORM, one file to read.
-- **Registry consolidation is one request with a validator.** After the corpus is built the
-  model sees the whole registry once and proposes merges; the code accepts a merge only if
-  both keys exist, the unit classes agree, and no chains form. Merges are stored as aliases and
-  survive rebuilds. On the corpus it proposed two, both accepted, and declined to merge
-  `revenue_from_operations` with `revenue_from_contracts_with_customers`, which is a
-  defensible accounting distinction, so those stay separate.
-- **Gemini 3.8 Flash at temperature 0 with a fixed seed.** Tested on the earnings deck: 3.8
-  and 3.7 Flash gave 78 to 79 well-grounded claims, 3.6 fewer, the Lite models invented a
-  "consolidated" scope on every claim and were rejected for extraction.
-
-AI tools used: Claude Code for planning and implementation; Gemini 3.8 Flash for extraction,
-the registry consolidation pass, and reading plain-English questions.
+AI tools used: Claude Code for planning the implementation, UI mockup and debugging. Gemini 3.8 Flash for
+extraction, the registry consolidation pass, and reading plain-English questions.
 
 ## Limitations and Next Steps
 
 | Limitation | What happens today | Next step |
 |---|---|---|
-| Chart pairings cannot be verified from a text layer that has lost them. | Such claims are accepted at the `tokens` grade and visibly marked; a mis-paired value contradicts the exact figure elsewhere and lands in review. | Render the chart region and ask the model to re-read only it, then re-verify. |
-| Metric keys drift. The model sometimes keys the same measure two ways, and sometimes keys two measures the same way (`cpi_inflation` holds both CPI-Combined and CPI-IW; `headcount` holds workforce and ESOP holders). Uploading a national accounts release showed the sharper form: nominal and real GDP growth under one key, and rice, coal and cement production growth under another, so the engine ordered them by basis as if each were one series. | Registry hints in every prompt reduce it; the consolidation pass merges what it is sure of; the registry view shows the rest with counts and aliases. The same-publisher label check runs before the basis rule, so two rows of one release are two line items at low confidence rather than a supersession: on a US GDP release that filed 23 measures under `gdp_growth`, 176 confident supersessions became 24. The Answer view can still pick the wrong series: asked for US real GDP growth in Q2 2025 it returns real final sales (1.9) over real GDP (3.3), because a coincidental agreement between two unrelated 1.9 rows counts as corroboration. | Ask the model to put a commodity, sector or price basis into `scope`, then the scope coordinate separates them; a manual merge and split in the UI, recorded in the same alias table. Ranking tweaks alone do not help: each one tried flipped a cached demo answer. |
-| Attribution is not extracted. The Economic Survey quotes the IMF's FY26 inflation projection; the claim carries the Survey as publisher, so its pair against the IMF's own later figure reads as a cross-publisher contradiction when it is the IMF revising itself. | Stated. The pair is still shown for review with both spans. | An `asserted_by` field on the claim, distinct from the document's publisher. |
-| Publication dates come from the model reading the cover pages. The RBI report came back without one. | Its supersession rests on basis alone; the Documents view says "date not found". PDF metadata carries the right month for all six files, but it is a guess about provenance and is not used. | Offer the metadata date as a suggestion the user confirms. |
-| The fiscal year is assumed to end in March, and period phrasing is parsed in English. | "Year ended December 31, 2024", "Q3-2024", "3Q-2024", "2025:Q2" and "30-Sep-24" are read correctly (before the last three were added, a Tesla deck had 0 of 57 claims comparable), but a bare "fiscal 2024" becomes April 2023 to March 2024, so a question about Apple's fiscal 2024 misses its October to September block, and "31 décembre 2024" is left non-comparable. Such documents miss comparisons rather than inventing them. | A per-document convention read from the first slice; month names in other languages. |
-| State facts use one small rule. | Appointment to resignation works, matched on DIN. Chains with more than two steps, or role changes without a date, are out of scope. | Model roles as intervals with start and end. |
-| Scanned PDFs have no text layer, and some text pages carry their tables as images. | Every claim on a scanned page is quarantined as `no_text_layer`; a claim read from an image table on a text page is quarantined as `quote_not_found` (13 of 82 claims on a MoSPI press note). Nothing is invented. | OCR the page image before verification. |
-| Thinking models are not deterministic at temperature 0. | The same deck gave 78 and then 62 claims on the same prompt in two runs. The committed cache is what makes the corpus reproducible. | Nothing to fix; stated so the numbers are read correctly. |
-| Two domains were tested in depth. | A 30-page arXiv paper from outside both domains extracted cleanly (40 claims, 30 exact, 1 quarantined) and produced no relations, because 38 of its claims carry no period or unit and nothing in the layer measures the same thing. That is the honest generalisation result: the layer does not invent comparisons it cannot ground. | More conventions in the period and unit parsers as new document types arrive. |
-| Rates with different annualisation conventions share a block. | BEA's annualised 3.0 per cent for US Q2 2025 and the Bank of England's quarter-on-quarter 0.7 for the same quarter were flagged as a contradiction for review: an apparent contradiction the engine has no coordinate for. | An annualisation coordinate read from "annual rate", "annualised" or "q/q" wording, applied like scope. |
-| Unit wording from the model decides comparability. | Apple's FY25 statement came back with "million" and no currency while the FY24 statement said "USD million"; the bare scale became a count and the two statements shared no relation. A bare scale on a money-like label now takes the page's single currency (the two statements share eleven relations); on a count-like label, or on a page with two currencies, it stays a count. A figure the model leaves with no unit at all (Tesla's vehicle deliveries) remains non-comparable. | Carry a table header's unit onto every figure of the table, and treat a unit-less integer under a count-like key as a count. |
-| A question without a period cannot reach a numeric fact. | Numeric block keys always carry a date interval, so "What is the Bank of England's Bank Rate?" is read correctly and finds nothing although the claim is in the layer. | Fall back to the latest period for that entity and metric. |
-| Free-tier quota. | On an AI Studio key a 100-page upload is two of the day's twenty requests; the UI says when the quota is gone and accepts a caller's own key. The hosted demo runs on Vertex AI and has no daily cap. | Nothing to fix. |
+| Charts whose text layer has lost the year-to-value pairing. | The claim is kept at the `tokens` grade and marked; a mis-paired value contradicts the exact figure elsewhere and lands in review. | Render the chart region and ask the model to re-read only that. |
+| Metric keys drift: one measure keyed two ways, or two measures under one key (`cpi_inflation` holds CPI-Combined and CPI-IW). A US GDP release filed 23 measures under `gdp_growth`. | Registry hints and the consolidation pass reduce it; the registry view shows the rest. Since the label rule runs before the basis rule, the 176 false supersessions that release produced became 24. The Answer view can still pick the wrong series inside such a block: for US Q2 2025 growth it returns real final sales (1.9) over real GDP (3.3). | Have the model put commodity, sector or price basis into `scope`; manual merge and split in the UI. Ranking tweaks alone did not help; each one tried broke a correct answer elsewhere. |
+| Unit wording from the model decides comparability. | Apple's FY25 statement said "million" with no currency, so at first it shared no relation with the FY24 statement. Bare scales on money-like labels now take the page's currency (eleven relations appear); a figure the model leaves with no unit at all stays non-comparable. | Carry a table header's unit onto every figure; treat unit-less integers under count-like keys as counts. |
+| The fiscal year is assumed to end in March, and periods are parsed in English. | A bare "fiscal 2024" becomes April 2023 to March 2024, so a question about Apple's fiscal 2024 misses; "31 décembre 2024" is non-comparable. Such documents miss comparisons rather than inventing them. | A per-document convention read from the first slice; month names in other languages. |
+| Rates with different annualisation conventions share a block. | BEA's annualised 3.0 and the Bank of England's quarter-on-quarter 0.7 for the same quarter were flagged as a contradiction. | An annualisation coordinate read from "annual rate" or "q/q" wording, applied like scope. |
+| Attribution is not extracted. | The Economic Survey quotes the IMF's projection; the claim carries the Survey as publisher, so the pair against the IMF's own later figure reads as cross-publisher when it is the IMF revising itself. | An `asserted_by` field distinct from the publisher. |
+| Publication dates come from the model reading the cover. | The RBI report came back without one; its supersessions rest on basis alone. PDF metadata has the right month but is not used, because it is a guess about provenance. | Offer the metadata date for the user to confirm. |
+| A question with no period cannot reach a numeric fact. | Block keys carry a date interval, so "What is the Bank Rate?" is read correctly and finds nothing. | Fall back to the latest period for that entity and metric. |
+| Scanned pages and image tables have no text to verify against. | Every such claim is quarantined (`no_text_layer` or `quote_not_found`). Nothing is invented. | OCR before verification. |
 
 ## Additional Notes
 
-**Numbers.** Six documents, 511 pages, two domains. 956 claims extracted, 930 grounded (861
-exact, 10 nearby, 59 tokens), 26 quarantined. 224 metric keys with 2 aliases, 112 entities,
-473 relations. Across documents: 46 corroborate, 38 reconcile, 12 supersede, 15 contradict.
+**Numbers.** Six documents, 511 pages, two domains. 956 claims, 930 grounded (861 exact, 10 nearby, 59
+tokens), 26 quarantined. 224 metric keys with 2 aliases, 112 entities, 473 relations. Across documents: 46
+corroborate, 38 reconcile, 12 supersede, 15 contradict.
 
-**Cost and time.** The corpus took 11 extraction requests in one pass (989 s, mostly model
-time) plus one consolidation request, about ₹100 of Vertex AI credit. Everything after that
-is free: a full zero-request rebuild from an empty database, cache replay included, takes 8.5 s
-and reproduces every claim and evidence row byte for byte; ingesting all 511 pages takes 1.4 s;
-a page render with highlights takes 0.08 s; an Answer lookup 9 ms. Under eight concurrent
-readers for a minute while a document was being extracted, 3,078 requests all returned 200
-with a 95th-percentile latency of 0.24 s on SQLite. With no key configured at all, the six
-documents, every cached question and the cached demo deck still work; a live request fails on
-its own row with the reason.
-Adding a 10-page document to the existing layer took one request (89 s of model time), then
-0.6 s to verify, canonicalise and reconcile, touching 24 of 617 blocks and producing 27
-cross-document relations. Re-uploading a known PDF takes 3 ms and no request.
+**Cost and speed.** A full rebuild from an empty database replays the cache
+in about ten seconds and reproduces every row byte for byte. Ingesting all 511 pages takes 1.4 s, a page
+render with highlights 0.08 s, an Answer lookup 9 ms. Under eight concurrent readers while a document was
+being extracted, 3,078 requests all returned 200 with a 95th-percentile latency of 0.24 s. Adding a 10-page
+document took one request (89 s of model time) and 0.6 s to verify, canonicalise and reconcile, touching 24
+of 617 blocks. Re-uploading a known PDF takes 3 ms. On the hosted demo a 23-page deck goes from upload to
+ready in about a minute.
 
-**Why the database and cache are committed.** The brief says a paid service should come with
-enough sample output to evaluate without an account. Committing the processed corpus and
-every raw model response does that literally: the repository demonstrates itself, and every
-number in this README can be checked by opening the UI.
+**Why the database and cache are committed.** The assignment mentions that a paid service should come with enough sample
+output to evaluate without an account. Committing the processed corpus and every raw model response does
+that literally: every number in this README can be checked by opening the UI.
 
-**What broke under wider testing, and what was done.** Fourteen PDFs from outside the
-starter set were pushed through the pipeline: two MoSPI GDP press notes, three more Delhivery
-filings including a 17 MB signed results file, a Berkshire Hathaway letter, a Fed projections
-release, the IPCC AR6 summary, a UN SDG report, an ECB bulletin, an arXiv paper, a Raspberry
-Pi datasheet and an IRS form, plus synthetic files: encrypted, empty, truncated, junk before
-the header, a scanned deck, a poster page, a six-slide KPI deck, French text, US-style dates,
-lakh-crore figures and a restated comparative. The failures that came out of it, all fixed and
-covered by tests: a US-format date in a period string crashed canonicalisation and failed the
-whole document; a multi-year range such as "2000-2019" was read as the fiscal year ending in
-its last year, which had mis-dated seven starter claims; "lakh crore" was scaled as crore, 100,000 times too small, so a figure printed
-both ways in one document was flagged as a contradiction; a Unicode minus sign turned a
-negative into a text claim; an encrypted PDF returned a 500; a PDF with bytes before its
-header was refused; a KPI deck whose slides are all under 40 words produced nothing because
-every slide was marked skippable; a restated comparative labelled pro forma only reconciled
-with the original, so the Answer view kept the stale figure; cached questions and the
-zero-request rebuild needed an API key anyway, and the committed default model did not match
-the cache; a document interrupted mid-pipeline could never be re-run; the documents view wiped
-the upload form on every poll; and the facts and relations views silently stopped at 300 rows.
-A second pass added the worst case found: the character-span search was a backtracking regex,
-so a quote of repeated tokens against a page of repeated tokens (a sparse numeric table is
-enough) never returned and, because the pipeline lock is process-wide, would have frozen every
-later upload on that instance; it is now a linear scan. The same pass made the worker claim a
-document atomically before extracting, so two instances cannot process one document at once,
-made two simultaneous uploads of the same bytes resolve to one row instead of a constraint
-error, tolerated a page whose text layer cannot be read, accepted page numbers the model
-writes as strings, and capped question length.
+**Testing beyond the starter set.** Three passes, about 36 outside PDFs in total: MoSPI GDP press notes, more
+Delhivery filings, a Berkshire Hathaway letter, a Fed projections release, the IPCC summary, a UN SDG report,
+an ECB bulletin, an arXiv paper, a Raspberry Pi datasheet, an IRS form, Apple's FY24 and FY25 statements, two
+BEA GDP releases, two Tesla decks, the UN World Population Prospects summary and 100 pages of the Bank of
+England's Monetary Policy Report, plus synthetic files (encrypted, empty, truncated, scanned, French text,
+US-style dates, lakh-crore figures, a restated comparative). Grounding held throughout: in the last pass, 599
+of 611 claims were re-found exactly. What broke, all fixed and covered by tests:
 
-A third pass, run the way a grader would, pushed eight documents from outside both domains through a
-sandbox copy of the layer: Apple's FY24 and FY25 statements, two BEA GDP releases, two Tesla decks, the
-UN World Population Prospects summary at 18.5 MB and 100 pages of the Bank of England's Monetary
-Policy Report. 291 pages, ten requests, under ten minutes, 599 of 611 claims re-found exactly. BEA's
-second estimate superseded its advance estimate with the right reason, and the Economic Survey's
-projection of US growth was corroborated by BEA's and the Bank of England's outturns. What broke: the
-Apple FY25 statement said "million" without a currency, so it shared no relation with the FY24
-statement although it restates every FY24 figure; Tesla's Q3-2024, 3Q-2024 and 30-Sep-24 periods did
-not parse, so its Q3 deck had no comparable claim; "$M" lost its scale; and the BEA release filed 23
-measures under `gdp_growth`, which the basis rule turned into 176 confident supersessions. Fixed:
-those period forms, the currency-letter scale, the page-currency rule for bare units on money-like
-labels, and the label rule running before the basis rule. On the starter corpus the fix removed the
-two within-document supersessions, both of which had been wrong (CPI-IW over CPI-Combined,
-electronics exports over total exports), and added nine within-document relations for prospectus
-figures whose unit was a bare "million" on a rupee page; nothing across documents changed. Not fixed
-and stated above: series drift inside a block and the Answer ranking it misleads, annualised against
-quarter-on-quarter rates, period-less questions, and unit-less counts.
-
-**What would need to be true to trust this outside these two domains.** The period parser
-would need the target's fiscal conventions; the unit parser would need its currencies and
-scales; the model would need a few pages to seed the registry with that domain's measures.
-None of that is document-specific, and none of it is hardcoded, but each is a place where a
-new domain can silently miss comparisons until it is added.
+- Parsing: a US-format date crashed a whole document; "2000-2019" was read as one fiscal year; "lakh crore" was
+  scaled as crore; a Unicode minus made a negative into text; "Q3-2024", "3Q-2024" and "30-Sep-24" did not
+  parse, so a Tesla deck had no comparable claim; "$M" lost its scale; a bare "million" with no currency became
+  a count, so two Apple statements shared no relation.
+- Reasoning: a restated comparative labelled pro forma only reconciled, so the Answer view kept the stale
+  figure; a release that filed 23 measures under one key produced 176 confident supersessions until the label
+  rule was moved ahead of the basis rule, which also removed two wrong supersessions in the starter corpus.
+- Robustness: an encrypted PDF returned a 500; a KPI deck with short slides produced nothing because every
+  slide was skipped; the character-span search was a backtracking regex that hung on repeated tokens and, with
+  a process-wide lock, would have frozen later uploads (now a linear scan); two instances could process one
+  document at once; a document interrupted mid-pipeline could never be re-run.
 
 **Repository layout.**
 
@@ -355,7 +273,7 @@ strata/            the package, one module per stage
   ask.py           plain-English question to coordinates
   queries.py       read models for the API, including the Answer view
   api.py           FastAPI routes and page rendering
-  providers/       gemini (AI Studio or Vertex) and ollama adapters
+  providers/       gemini (AI Studio or Vertex)
   cache.py         model responses keyed by content hash, committed
   schema.sql       plain SQL, identical on SQLite and libSQL
 web/               vanilla JS and Tailwind over the API, no build step

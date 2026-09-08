@@ -22,7 +22,8 @@ def connect(cfg: config.Settings | None = None, path: Path | None = None, worker
         if worker and path is None:
             replica = replica.with_name(f"{replica.stem}-worker{replica.suffix}")
         replica.parent.mkdir(parents=True, exist_ok=True)
-        conn = libsql.connect(
+        connect = libsql.connect
+        conn = connect(
             str(replica), sync_url=cfg.turso_url, auth_token=cfg.turso_token, isolation_level=None, sync_interval=30
         )
         conn.sync()

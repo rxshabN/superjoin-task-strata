@@ -21,8 +21,6 @@ class Settings:
     gemini_model: str
     gcp_project: str | None
     gcp_location: str
-    ollama_url: str
-    ollama_model: str
     pages_per_request: int
     claims_per_page: int
     request_spacing_s: float
@@ -38,7 +36,7 @@ class Settings:
 
     @property
     def model(self) -> str:
-        return self.ollama_model if self.provider == "ollama" else self.gemini_model
+        return self.gemini_model
 
 
 def load(env=None) -> Settings:
@@ -50,8 +48,6 @@ def load(env=None) -> Settings:
         gemini_model=get("GEMINI_MODEL", "gemini-3.8-flash"),
         gcp_project=get("GOOGLE_CLOUD_PROJECT") or None,
         gcp_location=get("GOOGLE_CLOUD_LOCATION", "global"),
-        ollama_url=get("OLLAMA_URL", "http://localhost:11434"),
-        ollama_model=get("OLLAMA_MODEL", "llama3.2-vision"),
         pages_per_request=int(get("STRATA_PAGES_PER_REQUEST", "50")),
         claims_per_page=int(get("STRATA_CLAIMS_PER_PAGE", "8")),
         request_spacing_s=float(get("STRATA_REQUEST_SPACING_S", "12")),
