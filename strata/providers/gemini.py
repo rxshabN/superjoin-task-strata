@@ -8,7 +8,7 @@ from .. import config
 from .base import Response
 
 log = logging.getLogger("strata.gemini")
-RETRY_WAITS = (30, 60, 120, 240, 300, 300, 300)
+RETRY_WAITS = {429: (20, 40), 503: (45,)}
 
 
 class GeminiProvider:
@@ -47,25 +47,25 @@ class GeminiProvider:
             types.Part.from_text(text=prompt),
         ]
         result = None
-        for attempt in range(len(RETRY_WAITS) + 1):
+        retries = {429: 0, 503: 0}
+        while result is None:
             self._wait()
             self._last = time.monotonic()
             try:
                 result = self.client.models.generate_content(model=self.model, contents=parts, config=self._config())
-                break
             except errors.APIError as e:
                 code = getattr(e, "code", None)
-                if code in (429, 503) and attempt < len(RETRY_WAITS):
-                    log.warning("gemini %s on attempt %d, waiting %ds", code, attempt + 1, RETRY_WAITS[attempt])
-                    time.sleep(RETRY_WAITS[attempt])
+                if code in RETRY_WAITS and retries[code] < len(RETRY_WAITS[code]):
+                    wait = RETRY_WAITS[code][retries[code]]
+                    retries[code] += 1
+                    log.warning("gemini %s, retry %d after %ds", code, retries[code], wait)
+                    time.sleep(wait)
                     continue
                 if code == 400 and self._thinking and "thinking" in str(e).lower():
                     log.warning("gemini rejected thinking_level for %s; retrying with default thinking", self.model)
                     self._thinking = False
                     continue
                 raise
-        if result is None:
-            raise RuntimeError("gemini: no response after retries")
         candidate = result.candidates[0] if result.candidates else None
         finish = candidate.finish_reason.name if candidate and candidate.finish_reason else "UNKNOWN"
         usage = result.usage_metadata

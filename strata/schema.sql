@@ -9,6 +9,7 @@ create table if not exists documents (
     page_count integer not null default 0,
     status text not null default 'queued',
     malformed_lines integer not null default 0,
+    model text,
     ingested_at text
 );
 

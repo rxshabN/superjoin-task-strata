@@ -11,6 +11,8 @@ from strata.reconcile import reconcile
 from strata.verify import verify_document
 
 EXTRACTABLE = ("ingested", "extracting", "partial", "quota_exhausted")
+MAX_PASSES = 8
+PASS_WAIT_S = 900
 
 
 def ingest_all(conn, only: str | None) -> list[int]:
@@ -54,6 +56,9 @@ def extract_all(conn, ids: list[int]):
             conn.execute("update documents set status = 'ingested' where id = ?", (doc_id,))
             db.commit(conn)
             print(f"  failed: {type(error).__name__}: {str(error)[:200]}", flush=True)
+            if getattr(error, "code", None) == 503:
+                print("  model unavailable; ending this pass", flush=True)
+                return
             continue
         print(
             f"  requests={stats['requests']} cached={stats['cached']} finish={stats['finish']} "
@@ -84,6 +89,7 @@ def reconcile_all(conn, ids: list[int]):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--extract", action="store_true")
+    parser.add_argument("--until-done", action="store_true")
     parser.add_argument("--reconcile", action="store_true")
     parser.add_argument("--only")
     args = parser.parse_args()
@@ -92,7 +98,17 @@ def main():
     started = time.perf_counter()
     ids = ingest_all(conn, args.only)
     if args.extract:
-        extract_all(conn, ids)
+        for attempt in range(1, MAX_PASSES + 1):
+            extract_all(conn, ids)
+            pending = [
+                i
+                for i in ids
+                if db.one(conn, "select status from documents where id = ?", (i,))["status"] in EXTRACTABLE
+            ]
+            if not pending or not args.until_done or attempt == MAX_PASSES:
+                break
+            print(f"\n{len(pending)} document(s) pending after pass {attempt}; waiting {PASS_WAIT_S}s", flush=True)
+            time.sleep(PASS_WAIT_S)
     if args.reconcile:
         reconcile_all(conn, ids)
     print(f"\n{time.perf_counter() - started:.1f}s total, db={db.backend()}")

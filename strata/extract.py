@@ -224,7 +224,7 @@ def extract_document(conn, doc_id: int, provider=None, cache: Cache | None = Non
     pages = {p["page_no"]: p for p in ingest.pages(conn, doc_id)}
     stats = {"requests": 0, "cached": 0, "claims": 0, "malformed": 0, "resumes": 0, "finish": [], "tokens_out": 0}
     started = time.perf_counter()
-    conn.execute("update documents set status = 'extracting' where id = ?", (doc_id,))
+    conn.execute("update documents set status = 'extracting', model = ? where id = ?", (provider.model, doc_id))
     db.commit(conn)
     status = "extracted"
     for first, last in slices(doc["page_count"], cfg.pages_per_request):
