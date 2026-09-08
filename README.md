@@ -26,7 +26,7 @@ Open http://127.0.0.1:8000. This needs no API key: `data/strata.db` holds the si
 PDFs fully processed, and every model response is in `data/cache/`. Browse the documents,
 facts, relations, quarantine and the Answer view; the four demo questions on the Answer view
 replay from the cache too, because the model client is only created on the first live
-request. Tests: `uv run pytest` (238 tests, about fifteen seconds).
+request. Tests: `uv run pytest` (249 tests, about fifteen seconds).
 
 To process new PDFs, or to ask a question that is not cached, the server needs a model.
 Copy `.env.example` to `.env` and pick one:
@@ -43,7 +43,10 @@ the optional field on the upload form; it is never stored. Uploads are capped at
 100 pages (`STRATA_MAX_UPLOAD_MB`, `STRATA_MAX_UPLOAD_PAGES`), and a document is sent to the
 model in 50-page slices, one request each. Password-protected, empty and non-PDF files are
 refused with a reason; a document that ends with no claims, a truncated response or an
-exhausted quota says so on its row, and uploading the same file again re-runs it.
+exhausted quota says so on its row, and uploading the same file again re-runs it. A document
+still being processed is not queued twice: a second upload of the same bytes returns its
+current status, and only a document untouched for fifteen minutes counts as stuck. Questions
+are capped at 500 characters.
 
 Rebuilding the corpus from scratch replays the cache and makes zero requests:
 
@@ -113,7 +116,7 @@ in ordinary Python afterwards, so all of it can be rerun from the response cache
 |---|---|---|
 | Ingest | PyMuPDF text per page, word counts, and three regex hints per page: a unit declaration such as "All amounts in Indian Rupees in million", a consolidated/standalone marker, a period header. Pages under 40 words with fewer than three numbers are skipped (covers and dividers, not KPI slides). A document is keyed by SHA-256, so re-uploading is a no-op. | `documents`, `pages` |
 | Extract | 50-page slices sent as native PDF to Gemini 3.8 Flash with the page hints and the metric keys seen so far. One JSON object per line: subject, metric key, the document's own label, value, unit, period, scope, basis, a verbatim quote, and identifiers such as DIN or CIN. The first slice also returns a document line: title, publisher, publication date. Temperature 0, fixed seed, raw response cached under a hash of the PDF slice and the prompt without its two advisory lines (the registry and the skipped-page list), so the cache survives registry growth. | `claims` |
-| Verify | The quote is normalised and searched on the cited page (`exact`), on the neighbouring pages (`nearby`), then as a bag of numbers and words (`tokens`). Pass: grade, character span and bounding boxes stored. Fail: quarantine with a reason. | `evidence`, `quarantine` |
+| Verify | The quote is normalised and searched on the cited page (`exact`), on the neighbouring pages (`nearby`), then as a bag of numbers and words (`tokens`). Pass: grade, character span (a linear word-by-word scan, no regex backtracking) and bounding boxes stored. Fail: quarantine with a reason. | `evidence`, `quarantine` |
 | Canonicalise | Period strings become date intervals (FY25, 2024-25, FY2024/25, Q3:2024-25 and "first quarter of FY2025/26" all resolve; month-first dates such as 12/31/2024 are recognised when the day cannot be a month; an unreadable period leaves the claim non-comparable rather than failing the document). Units become a base unit and scaled value, with stacked scales multiplied (a lakh crore is 10^12), and the printed precision kept for tolerance. Entities resolve by identifier first, then by normalised name; a generic subject such as "the Company" resolves to the document's publisher. Basis is read from the claim, from markers like "(P)", "(AE)" or a trailing BE/RE, or from phrases in the quote. Metric keys join a registry that grows per document. Block key = entity, metric, interval. | `entities`, `metrics`, `claim_canon` |
 | Reconcile | Every pair inside a block goes through the decision procedure below. When a document is added, only the blocks it touches are recomputed. | `relations` |
 
@@ -215,7 +218,7 @@ August 24, 2023. Matched on DIN 01173669, the later state supersedes the earlier
 ### Engineering decisions and trade-offs
 
 - **One model stage, four deterministic stages.** Extraction is the only place a model
-  reads pages. Verification, canonicalisation and reconciliation are plain Python with 238
+  reads pages. Verification, canonicalisation and reconciliation are plain Python with 249
   tests, so their behaviour is predictable and a bug found late costs code, not quota.
 - **No embeddings, no graph database.** Comparison happens inside blocks keyed by entity,
   metric and date interval. This is narrower than similarity search and that is the point:
@@ -270,7 +273,9 @@ is free: a full zero-request rebuild from an empty database, cache replay includ
 and reproduces every claim and evidence row byte for byte; ingesting all 511 pages takes 1.4 s;
 a page render with highlights takes 0.08 s; an Answer lookup 9 ms. Under eight concurrent
 readers for a minute while a document was being extracted, 3,078 requests all returned 200
-with a 95th-percentile latency of 0.24 s on SQLite.
+with a 95th-percentile latency of 0.24 s on SQLite. With no key configured at all, the six
+documents, every cached question and the cached demo deck still work; a live request fails on
+its own row with the reason.
 Adding a 10-page document to the existing layer took one request (89 s of model time), then
 0.6 s to verify, canonicalise and reconcile, touching 24 of 617 blocks and producing 27
 cross-document relations. Re-uploading a known PDF takes 3 ms and no request.
@@ -298,6 +303,14 @@ with the original, so the Answer view kept the stale figure; cached questions an
 zero-request rebuild needed an API key anyway, and the committed default model did not match
 the cache; a document interrupted mid-pipeline could never be re-run; the documents view wiped
 the upload form on every poll; and the facts and relations views silently stopped at 300 rows.
+A second pass added the worst case found: the character-span search was a backtracking regex,
+so a quote of repeated tokens against a page of repeated tokens (a sparse numeric table is
+enough) never returned and, because the pipeline lock is process-wide, would have frozen every
+later upload on that instance; it is now a linear scan. The same pass made the worker claim a
+document atomically before extracting, so two instances cannot process one document at once,
+made two simultaneous uploads of the same bytes resolve to one row instead of a constraint
+error, tolerated a page whose text layer cannot be read, accepted page numbers the model
+writes as strings, and capped question length.
 
 **What would need to be true to trust this outside these two domains.** The period parser
 would need the target's fiscal conventions; the unit parser would need its currencies and
@@ -323,7 +336,7 @@ strata/            the package, one module per stage
   schema.sql       plain SQL, identical on SQLite and libSQL
 web/               vanilla JS and Tailwind over the API, no build step
 scripts/           build_corpus.py, seed_turso.py
-tests/             238 tests
+tests/             249 tests
 data/              strata.db and cache/
 starter-datasets/  the six PDFs shipped with the assignment
 ```
