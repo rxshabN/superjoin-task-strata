@@ -16,8 +16,11 @@ def _path(value: str) -> Path:
 @dataclass(frozen=True)
 class Settings:
     provider: str
+    gemini_backend: str
     gemini_api_key: str | None
     gemini_model: str
+    gcp_project: str | None
+    gcp_location: str
     ollama_url: str
     ollama_model: str
     pages_per_request: int
@@ -42,8 +45,11 @@ def load(env=None) -> Settings:
     get = (env if env is not None else os.environ).get
     return Settings(
         provider=get("STRATA_PROVIDER", "gemini"),
+        gemini_backend=get("GEMINI_BACKEND", "aistudio"),
         gemini_api_key=get("GEMINI_API_KEY") or None,
         gemini_model=get("GEMINI_MODEL", "gemini-3.7-flash"),
+        gcp_project=get("GOOGLE_CLOUD_PROJECT") or None,
+        gcp_location=get("GOOGLE_CLOUD_LOCATION", "global"),
         ollama_url=get("OLLAMA_URL", "http://localhost:11434"),
         ollama_model=get("OLLAMA_MODEL", "llama3.2-vision"),
         pages_per_request=int(get("STRATA_PAGES_PER_REQUEST", "50")),

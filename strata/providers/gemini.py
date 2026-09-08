@@ -14,12 +14,24 @@ RETRY_WAITS = {429: (20, 40), 503: ()}
 class GeminiProvider:
     name = "gemini"
 
-    def __init__(self, api_key: str | None = None, model: str | None = None, spacing_s: float | None = None):
+    def __init__(
+        self,
+        api_key: str | None = None,
+        model: str | None = None,
+        spacing_s: float | None = None,
+        backend: str | None = None,
+    ):
         cfg = config.settings
-        key = api_key or cfg.gemini_api_key
-        if not key:
-            raise RuntimeError("GEMINI_API_KEY is not set")
-        self.client = genai.Client(api_key=key)
+        self.backend = backend or cfg.gemini_backend
+        if self.backend == "vertex":
+            if not cfg.gcp_project:
+                raise RuntimeError("GEMINI_BACKEND=vertex needs GOOGLE_CLOUD_PROJECT")
+            self.client = genai.Client(vertexai=True, project=cfg.gcp_project, location=cfg.gcp_location)
+        else:
+            key = api_key or cfg.gemini_api_key
+            if not key:
+                raise RuntimeError("GEMINI_API_KEY is not set")
+            self.client = genai.Client(api_key=key)
         self.model = model or cfg.gemini_model
         self.spacing_s = cfg.request_spacing_s if spacing_s is None else spacing_s
         self._last = 0.0

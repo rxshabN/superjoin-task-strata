@@ -35,6 +35,17 @@ def test_settings_from_env():
     assert s.provider == "ollama"
     assert s.model == "x"
     assert db.backend(s) == "turso"
+    v = config.load({"GEMINI_BACKEND": "vertex", "GOOGLE_CLOUD_PROJECT": "p1"})
+    assert v.gemini_backend == "vertex" and v.gcp_project == "p1" and v.gcp_location == "global"
+    assert config.load({}).gemini_backend == "aistudio"
+
+
+def test_vertex_backend_requires_project(monkeypatch):
+    monkeypatch.setattr(
+        config, "settings", dataclasses.replace(config.settings, gemini_backend="vertex", gcp_project=None)
+    )
+    with pytest.raises(RuntimeError):
+        get_provider("gemini")
 
 
 def test_schema_applies(tmp_path):
