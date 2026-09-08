@@ -187,6 +187,25 @@ def test_reextract_replaces_claims_and_ignores_registry_drift(tmp_path):
     assert counts == {"unrelated_key": 1, "revenue": 1, "cost": 1}
 
 
+def test_reextract_keeps_metrics_referenced_by_other_documents(tmp_path):
+    from strata.canon import canonicalise_document
+    from strata.verify import verify_document
+
+    cfg = dataclasses.replace(config.load({}), pages_per_request=50)
+    conn = db.init(db.connect(path=tmp_path / "t.db"))
+    cache = Cache(tmp_path / "cache", enabled=True)
+    first = ingest_bytes(conn, make_pdf(["revenue 1 " * 10]), "a.pdf")
+    extract_document(conn, first["id"], ScriptedProvider([(claim(1, "revenue", 1, "revenue 1"), "STOP")]), cache, cfg)
+    verify_document(conn, first["id"])
+    canonicalise_document(conn, first["id"])
+    second = ingest_bytes(conn, make_pdf(["revenue 2 " * 10]), "b.pdf")
+    extract_document(conn, second["id"], ScriptedProvider([(claim(1, "revenue", 2, "revenue 2"), "STOP")]), cache, cfg)
+    stats = extract_document(conn, second["id"], ScriptedProvider([]), cache, cfg)
+    assert stats["cached"] == 1
+    assert db.one(conn, "select claim_count as n from metrics where key = 'revenue'")["n"] == 2
+    assert db.one(conn, "select count(*) as n from claims")["n"] == 2
+
+
 def test_extract_document_replays_from_cache(tmp_path):
     cfg = dataclasses.replace(config.load({}), pages_per_request=50)
     conn = db.init(db.connect(path=tmp_path / "t.db"))

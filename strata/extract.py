@@ -206,6 +206,9 @@ def cache_key(cache: Cache, provider, prompt: str, sha256: str, first: int, last
 
 
 def clear_document(conn, doc_id: int):
+    counts = db.rows(
+        conn, "select metric_raw as key, count(*) as n from claims where doc_id = ? group by metric_raw", (doc_id,)
+    )
     conn.execute(
         "delete from relations where a_id in (select id from claims where doc_id = ?)"
         " or b_id in (select id from claims where doc_id = ?)",
@@ -214,10 +217,12 @@ def clear_document(conn, doc_id: int):
     for table in ("claim_canon", "evidence", "quarantine"):
         conn.execute(f"delete from {table} where claim_id in (select id from claims where doc_id = ?)", (doc_id,))
     conn.execute("delete from claims where doc_id = ?", (doc_id,))
-    conn.execute("delete from metrics")
+    for row in counts:
+        conn.execute("update metrics set claim_count = max(claim_count - ?, 0) where key = ?", (row["n"], row["key"]))
     conn.execute(
-        "insert into metrics (key, label, first_seen_doc, claim_count)"
-        " select metric_raw, min(label), min(doc_id), count(*) from claims group by metric_raw"
+        "delete from metrics where claim_count <= 0"
+        " and key not in (select metric_key from claim_canon where metric_key is not null)"
+        " and key not in (select metric_raw from claims)"
     )
     conn.execute("update documents set malformed_lines = 0 where id = ?", (doc_id,))
 
