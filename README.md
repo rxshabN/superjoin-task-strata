@@ -25,7 +25,8 @@ uv run uvicorn strata.api:app --reload
 Open http://127.0.0.1:8000. This needs no API key: `data/strata.db` holds the six starter
 PDFs fully processed, and every model response is in `data/cache/`. Browse the documents,
 facts, relations, quarantine and the Answer view; the four demo questions on the Answer view
-replay from the cache too. Tests: `uv run pytest` (189 tests, about four seconds).
+replay from the cache too, because the model client is only created on the first live
+request. Tests: `uv run pytest` (238 tests, about fifteen seconds).
 
 To process new PDFs, or to ask a question that is not cached, the server needs a model.
 Copy `.env.example` to `.env` and pick one:
@@ -40,7 +41,9 @@ Copy `.env.example` to `.env` and pick one:
 An upload can also carry its own key for that request only, in the `X-Gemini-Key` header or
 the optional field on the upload form; it is never stored. Uploads are capped at 20 MB and
 100 pages (`STRATA_MAX_UPLOAD_MB`, `STRATA_MAX_UPLOAD_PAGES`), and a document is sent to the
-model in 50-page slices, one request each.
+model in 50-page slices, one request each. Password-protected, empty and non-PDF files are
+refused with a reason; a document that ends with no claims, a truncated response or an
+exhausted quota says so on its row, and uploading the same file again re-runs it.
 
 Rebuilding the corpus from scratch replays the cache and makes zero requests:
 
@@ -108,10 +111,10 @@ in ordinary Python afterwards, so all of it can be rerun from the response cache
 
 | Stage | What it does | Writes |
 |---|---|---|
-| Ingest | PyMuPDF text per page, word counts, and three regex hints per page: a unit declaration such as "All amounts in Indian Rupees in million", a consolidated/standalone marker, a period header. Pages under 40 words are skipped. A document is keyed by SHA-256, so re-uploading is a no-op. | `documents`, `pages` |
-| Extract | 50-page slices sent as native PDF to Gemini 3.8 Flash with the page hints and the metric keys seen so far. One JSON object per line: subject, metric key, the document's own label, value, unit, period, scope, basis, a verbatim quote, and identifiers such as DIN or CIN. The first slice also returns a document line: title, publisher, publication date. Temperature 0, fixed seed, raw response cached by content hash. | `claims` |
+| Ingest | PyMuPDF text per page, word counts, and three regex hints per page: a unit declaration such as "All amounts in Indian Rupees in million", a consolidated/standalone marker, a period header. Pages under 40 words with fewer than three numbers are skipped (covers and dividers, not KPI slides). A document is keyed by SHA-256, so re-uploading is a no-op. | `documents`, `pages` |
+| Extract | 50-page slices sent as native PDF to Gemini 3.8 Flash with the page hints and the metric keys seen so far. One JSON object per line: subject, metric key, the document's own label, value, unit, period, scope, basis, a verbatim quote, and identifiers such as DIN or CIN. The first slice also returns a document line: title, publisher, publication date. Temperature 0, fixed seed, raw response cached under a hash of the PDF slice and the prompt without its two advisory lines (the registry and the skipped-page list), so the cache survives registry growth. | `claims` |
 | Verify | The quote is normalised and searched on the cited page (`exact`), on the neighbouring pages (`nearby`), then as a bag of numbers and words (`tokens`). Pass: grade, character span and bounding boxes stored. Fail: quarantine with a reason. | `evidence`, `quarantine` |
-| Canonicalise | Period strings become date intervals (FY25, 2024-25 and FY2024/25 are one interval). Units become a base unit and scaled value, with the printed precision kept for tolerance. Entities resolve by identifier first, then by normalised name. Basis is read from the claim, from markers like "(P)" or "(AE)", or from phrases in the quote. Metric keys join a registry that grows per document. Block key = entity, metric, interval. | `entities`, `metrics`, `claim_canon` |
+| Canonicalise | Period strings become date intervals (FY25, 2024-25, FY2024/25, Q3:2024-25 and "first quarter of FY2025/26" all resolve; month-first dates such as 12/31/2024 are recognised when the day cannot be a month; an unreadable period leaves the claim non-comparable rather than failing the document). Units become a base unit and scaled value, with stacked scales multiplied (a lakh crore is 10^12), and the printed precision kept for tolerance. Entities resolve by identifier first, then by normalised name; a generic subject such as "the Company" resolves to the document's publisher. Basis is read from the claim, from markers like "(P)", "(AE)" or a trailing BE/RE, or from phrases in the quote. Metric keys join a registry that grows per document. Block key = entity, metric, interval. | `entities`, `metrics`, `claim_canon` |
 | Reconcile | Every pair inside a block goes through the decision procedure below. When a document is added, only the blocks it touches are recomputed. | `relations` |
 
 ### The decision procedure
@@ -124,8 +127,10 @@ terms:
 2. If both state a scope and the scopes differ, they are **reconciled by scope**. Standalone
    against consolidated is the textbook case.
 3. If the bases differ and both are ranked (advance estimate < provisional < revised <
-   actual), the more mature basis **supersedes** the other. Projections and budgets are not
-   ranked; they only ever reconcile.
+   actual), the more mature basis **supersedes** the other. When one basis is unranked (a
+   projection, a budget, a pro forma restatement) and the same publisher printed the later
+   figure in a later publication, the later figure **supersedes** as a restatement; otherwise
+   the two only reconcile by basis.
 4. If one side states no scope and the other does, they are reconciled by scope at low
    confidence: unstated never contradicts.
 5. If both come from the same publisher: different labels mean two line items under one key,
@@ -168,13 +173,13 @@ the two agree within the printed precision of the crore figure, so the engine ca
 fact and notes that the scope wording differed.
 
 **Case 3, an apparent contradiction explained by context.** Two instances.
-By basis, [`#relation/300`](https://strata-600642773754.asia-south1.run.app/#relation/300): the Economic Survey (January 2025,
+By basis, [`#relation/298`](https://strata-600642773754.asia-south1.run.app/#relation/298): the Economic Survey (January 2025,
 page 4) says "As per the first advance estimates of national accounts, India's real GDP is
 estimated to grow by 6.4 per cent in FY25"; the IMF Article IV (November 2025, page 3) says
 "economic growth of 6.5 percent in FY2024/25". Same entity, metric, period and unit, values
 differ, but the Survey labels its figure an advance estimate, so the IMF figure supersedes it
 with the reason attached. The RBI annual report's provisional 6.5 supersedes the same claim
-([`#relation/299`](https://strata-600642773754.asia-south1.run.app/#relation/299)). Ask the Answer view for India's GDP growth
+([`#relation/297`](https://strata-600642773754.asia-south1.run.app/#relation/297)). Ask the Answer view for India's GDP growth
 in FY25 and you get 6.5, with both 6.4 claims kept as history. A retrieval system would
 happily answer 6.4.
 By scope, [`#relation/156`](https://strata-600642773754.asia-south1.run.app/#relation/156): the same annual-report page carries
@@ -189,7 +194,7 @@ Different publishers never supersede each other, so the engine flags the pair fo
 shows both spans. The corpus holds 15 such cross-document contradictions, all for review;
 another is the Survey's first advance estimate of FY25 growth (6.4) against the RBI's second
 advance estimate (6.5), which the engine cannot order because both carry the same basis label
-([`#relation/297`](https://strata-600642773754.asia-south1.run.app/#relation/297)).
+([`#relation/295`](https://strata-600642773754.asia-south1.run.app/#relation/295)).
 
 **Case 4, an extraction failure and how it is handled.** Two shapes.
 [`#claim/301`](https://strata-600642773754.asia-south1.run.app/#claim/301): a chart on deck page 9 whose text layer reads
@@ -210,7 +215,7 @@ August 24, 2023. Matched on DIN 01173669, the later state supersedes the earlier
 ### Engineering decisions and trade-offs
 
 - **One model stage, four deterministic stages.** Extraction is the only place a model
-  reads pages. Verification, canonicalisation and reconciliation are plain Python with 189
+  reads pages. Verification, canonicalisation and reconciliation are plain Python with 238
   tests, so their behaviour is predictable and a bug found late costs code, not quota.
 - **No embeddings, no graph database.** Comparison happens inside blocks keyed by entity,
   metric and date interval. This is narrower than similarity search and that is the point:
@@ -243,12 +248,12 @@ the registry consolidation pass, and reading plain-English questions.
 | Limitation | What happens today | Next step |
 |---|---|---|
 | Chart pairings cannot be verified from a text layer that has lost them. | Such claims are accepted at the `tokens` grade and visibly marked; a mis-paired value contradicts the exact figure elsewhere and lands in review. | Render the chart region and ask the model to re-read only it, then re-verify. |
-| Metric keys drift. The model sometimes keys the same measure two ways, and sometimes keys two measures the same way (`cpi_inflation` holds both CPI-Combined and CPI-IW; `headcount` holds workforce and ESOP holders). | Registry hints in every prompt reduce it; the consolidation pass merges what it is sure of; the registry view shows the rest with counts and aliases. | A manual merge and split in the UI, recorded in the same alias table. |
+| Metric keys drift. The model sometimes keys the same measure two ways, and sometimes keys two measures the same way (`cpi_inflation` holds both CPI-Combined and CPI-IW; `headcount` holds workforce and ESOP holders). Uploading a national accounts release showed the sharper form: nominal and real GDP growth under one key, and rice, coal and cement production growth under another, so the engine ordered them by basis as if each were one series. | Registry hints in every prompt reduce it; the consolidation pass merges what it is sure of; the registry view shows the rest with counts and aliases; the Answer view still picks the right current figure because a wrong-series claim rarely wins on basis and corroboration together. | Ask the model to put a commodity, sector or price basis into `scope`, then the scope coordinate separates them; and a manual merge and split in the UI, recorded in the same alias table. |
 | Attribution is not extracted. The Economic Survey quotes the IMF's FY26 inflation projection; the claim carries the Survey as publisher, so its pair against the IMF's own later figure reads as a cross-publisher contradiction when it is the IMF revising itself. | Stated. The pair is still shown for review with both spans. | An `asserted_by` field on the claim, distinct from the document's publisher. |
 | Publication dates come from the model reading the cover pages. The RBI report came back without one. | Its supersession rests on basis alone; the Documents view says "date not found". PDF metadata carries the right month for all six files, but it is a guess about provenance and is not used. | Offer the metadata date as a suggestion the user confirms. |
-| The fiscal year is assumed to end in March. | A document on another convention produces intervals that never match, so it misses comparisons rather than inventing them. | A per-document convention read from the first slice. |
+| The fiscal year is assumed to end in March, and period phrasing is parsed in English. | "Year ended December 31, 2024" is read correctly, but a bare "fiscal 2024" becomes April 2023 to March 2024, and "31 décembre 2024" is left non-comparable, so such documents miss comparisons rather than inventing them. | A per-document convention read from the first slice; month names in other languages. |
 | State facts use one small rule. | Appointment to resignation works, matched on DIN. Chains with more than two steps, or role changes without a date, are out of scope. | Model roles as intervals with start and end. |
-| Scanned PDFs have no text layer. | Every claim on such a page is quarantined as `no_text_layer`; nothing is invented. | OCR the page image before verification. |
+| Scanned PDFs have no text layer, and some text pages carry their tables as images. | Every claim on a scanned page is quarantined as `no_text_layer`; a claim read from an image table on a text page is quarantined as `quote_not_found` (13 of 82 claims on a MoSPI press note). Nothing is invented. | OCR the page image before verification. |
 | Thinking models are not deterministic at temperature 0. | The same deck gave 78 and then 62 claims on the same prompt in two runs. The committed cache is what makes the corpus reproducible. | Nothing to fix; stated so the numbers are read correctly. |
 | Two domains were tested in depth. | A 30-page arXiv paper from outside both domains extracted cleanly (40 claims, 30 exact, 1 quarantined) and produced no relations, because 38 of its claims carry no period or unit and nothing in the layer measures the same thing. That is the honest generalisation result: the layer does not invent comparisons it cannot ground. | More conventions in the period and unit parsers as new document types arrive. |
 | Free-tier quota. | On an AI Studio key a 100-page upload is two of the day's twenty requests; the UI says when the quota is gone and accepts a caller's own key. The hosted demo runs on Vertex AI and has no daily cap. | Nothing to fix. |
@@ -257,12 +262,15 @@ the registry consolidation pass, and reading plain-English questions.
 
 **Numbers.** Six documents, 511 pages, two domains. 956 claims extracted, 930 grounded (861
 exact, 10 nearby, 59 tokens), 26 quarantined. 224 metric keys with 2 aliases, 112 entities,
-463 relations. Across documents: 46 corroborate, 37 reconcile, 12 supersede, 15 contradict.
+464 relations. Across documents: 46 corroborate, 38 reconcile, 12 supersede, 15 contradict.
 
 **Cost and time.** The corpus took 11 extraction requests in one pass (989 s, mostly model
 time) plus one consolidation request, about ₹100 of Vertex AI credit. Everything after that
-is free: a full zero-request rebuild of canonical rows and relations takes 1.5 s; ingesting
-all 511 pages takes 1.4 s; a page render with highlights takes 0.08 s; an Answer lookup 9 ms.
+is free: a full zero-request rebuild from an empty database, cache replay included, takes 8.5 s
+and reproduces every claim and evidence row byte for byte; ingesting all 511 pages takes 1.4 s;
+a page render with highlights takes 0.08 s; an Answer lookup 9 ms. Under eight concurrent
+readers for a minute while a document was being extracted, 3,078 requests all returned 200
+with a 95th-percentile latency of 0.24 s on SQLite.
 Adding a 10-page document to the existing layer took one request (89 s of model time), then
 0.6 s to verify, canonicalise and reconcile, touching 24 of 617 blocks and producing 27
 cross-document relations. Re-uploading a known PDF takes 3 ms and no request.
@@ -271,6 +279,25 @@ cross-document relations. Re-uploading a known PDF takes 3 ms and no request.
 enough sample output to evaluate without an account. Committing the processed corpus and
 every raw model response does that literally: the repository demonstrates itself, and every
 number in this README can be checked by opening the UI.
+
+**What broke under wider testing, and what was done.** Fourteen PDFs from outside the
+starter set were pushed through the pipeline: two MoSPI GDP press notes, three more Delhivery
+filings including a 17 MB signed results file, a Berkshire Hathaway letter, a Fed projections
+release, the IPCC AR6 summary, a UN SDG report, an ECB bulletin, an arXiv paper, a Raspberry
+Pi datasheet and an IRS form, plus synthetic files: encrypted, empty, truncated, junk before
+the header, a scanned deck, a poster page, a six-slide KPI deck, French text, US-style dates,
+lakh-crore figures and a restated comparative. The failures that came out of it, all fixed and
+covered by tests: a US-format date in a period string crashed canonicalisation and failed the
+whole document; a multi-year range such as "2000-2019" was read as the fiscal year ending in
+its last year, which had mis-dated seven starter claims; "lakh crore" was scaled as crore, 100,000 times too small, so a figure printed
+both ways in one document was flagged as a contradiction; a Unicode minus sign turned a
+negative into a text claim; an encrypted PDF returned a 500; a PDF with bytes before its
+header was refused; a KPI deck whose slides are all under 40 words produced nothing because
+every slide was marked skippable; a restated comparative labelled pro forma only reconciled
+with the original, so the Answer view kept the stale figure; cached questions and the
+zero-request rebuild needed an API key anyway, and the committed default model did not match
+the cache; a document interrupted mid-pipeline could never be re-run; the documents view wiped
+the upload form on every poll; and the facts and relations views silently stopped at 300 rows.
 
 **What would need to be true to trust this outside these two domains.** The period parser
 would need the target's fiscal conventions; the unit parser would need its currencies and
@@ -296,7 +323,7 @@ strata/            the package, one module per stage
   schema.sql       plain SQL, identical on SQLite and libSQL
 web/               vanilla JS and Tailwind over the API, no build step
 scripts/           build_corpus.py, seed_turso.py
-tests/             189 tests
+tests/             238 tests
 data/              strata.db and cache/
 starter-datasets/  the six PDFs shipped with the assignment
 ```
