@@ -56,7 +56,9 @@ The demo runs on Cloud Run in the same GCP project as Vertex AI, so the service 
 authenticates to Gemini without any key:
 
 ```bash
-gcloud run deploy strata --source . --region asia-south1 --allow-unauthenticated \n  --min-instances 1 --max-instances 2 --memory 2Gi --cpu 1 --no-cpu-throttling --timeout 300 \n  --set-env-vars GEMINI_BACKEND=vertex,GOOGLE_CLOUD_PROJECT=<PROJECT>,GOOGLE_CLOUD_LOCATION=global,STRATA_DB=turso,STRATA_REPLICA_PATH=/tmp/replica.db,TURSO_DATABASE_URL=<URL>,TURSO_AUTH_TOKEN=<TOKEN>
+gcloud run deploy strata --source . --region asia-south1 --allow-unauthenticated \
+  --min-instances 1 --max-instances 2 --memory 2Gi --cpu 1 --no-cpu-throttling --timeout 300 \
+  --set-env-vars GEMINI_BACKEND=vertex,GOOGLE_CLOUD_PROJECT=<PROJECT>,GOOGLE_CLOUD_LOCATION=global,STRATA_DB=turso,STRATA_REPLICA_PATH=/tmp/replica.db,TURSO_DATABASE_URL=<URL>,TURSO_AUTH_TOKEN=<TOKEN>
 ```
 
 One minimum instance keeps the demo awake, and CPU stays allocated after a response so the
@@ -208,7 +210,7 @@ August 24, 2023. Matched on DIN 01173669, the later state supersedes the earlier
 ### Engineering decisions and trade-offs
 
 - **One model stage, four deterministic stages.** Extraction is the only place a model
-  reads pages. Verification, canonicalisation and reconciliation are plain Python with 188
+  reads pages. Verification, canonicalisation and reconciliation are plain Python with 189
   tests, so their behaviour is predictable and a bug found late costs code, not quota.
 - **No embeddings, no graph database.** Comparison happens inside blocks keyed by entity,
   metric and date interval. This is narrower than similarity search and that is the point:
