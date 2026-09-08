@@ -182,8 +182,18 @@ def entities(conn) -> list[dict]:
     return rows
 
 
-def _rank(c: dict) -> tuple:
-    return (RANK.get(c.get("basis_canon"), 0), published_key(c.get("published_at")) or "", c.get("id") or 0)
+GRADES = {"exact": 2, "nearby": 1, "tokens": 0}
+
+
+def _rank(c: dict, rels: list[dict]) -> tuple:
+    corroborations = sum(1 for r in rels if r["kind"] == "corroborates" and c["id"] in (r["a_id"], r["b_id"]))
+    return (
+        RANK.get(c.get("basis_canon"), 0),
+        corroborations,
+        published_key(c.get("published_at")) or "",
+        GRADES.get(c.get("grade"), 0),
+        -(c.get("id") or 0),
+    )
 
 
 def answer(conn, entity: str, metric: str, period: str | None = None) -> dict:
@@ -218,7 +228,7 @@ def answer(conn, entity: str, metric: str, period: str | None = None) -> dict:
     )
     superseded = {r["b_id"] for r in rels if r["kind"] == "supersedes"}
     live = [m for m in members if m["id"] not in superseded] or members
-    current = max(live, key=_rank)
+    current = max(live, key=lambda m: _rank(m, rels))
     by_id = {m["id"]: m for m in members}
 
     def others(kind):
@@ -237,10 +247,11 @@ def answer(conn, entity: str, metric: str, period: str | None = None) -> dict:
             )
         return out
 
-    history = []
-    for r in rels:
-        if r["kind"] == "supersedes":
-            history.append({"claim": by_id[r["b_id"]], "superseded_by": r["a_id"], "explanation": r["explanation"]})
+    history = {}
+    for r in sorted((r for r in rels if r["kind"] == "supersedes"), key=lambda r: r["a_id"] != current["id"]):
+        history.setdefault(
+            r["b_id"], {"claim": by_id[r["b_id"]], "superseded_by": r["a_id"], "explanation": r["explanation"]}
+        )
     return {
         "found": True,
         "block": block,
@@ -248,7 +259,7 @@ def answer(conn, entity: str, metric: str, period: str | None = None) -> dict:
         "metric": key,
         "period": list(span) if span else None,
         "current": current,
-        "history": history,
+        "history": list(history.values()),
         "corroborated_by": others("corroborates"),
         "contradicted_by": others("contradicts"),
         "reconciled_with": others("reconciled"),

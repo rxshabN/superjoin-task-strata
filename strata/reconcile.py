@@ -113,10 +113,6 @@ def relate(a: dict, b: dict) -> dict | None:
                 "contradicts", a, b, None, "publication date unknown, so supersession cannot be decided", "review"
             )
         return _relation("contradicts", a, b, None, "same publisher, same label, same date, different values", "review")
-    if not (va and vb):
-        return _relation(
-            "contradicts", a, b, None, "publication date unknown, so supersession cannot be decided", "review"
-        )
     if different_labels:
         return _relation(
             "contradicts", a, b, None, f"every coordinate matches and the values differ; {label_note}", "low"
