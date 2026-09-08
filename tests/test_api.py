@@ -36,7 +36,9 @@ def seed_claim(conn, doc_id, page, subject, metric, value, unit, period, quote, 
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    settings = dataclasses.replace(config.settings, db="sqlite", db_path=tmp_path / "api.db", max_upload_pages=3)
+    settings = dataclasses.replace(
+        config.settings, db="sqlite", db_path=tmp_path / "api.db", cache_dir=tmp_path / "cache", max_upload_pages=3
+    )
     monkeypatch.setattr(config, "settings", settings)
     conn = db.init(db.connect(settings))
     survey = ingest_bytes(
